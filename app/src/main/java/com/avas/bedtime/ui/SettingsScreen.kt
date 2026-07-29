@@ -349,7 +349,7 @@ fun SettingsScreen(
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (settings.hasAvaPhoto) "Change / crop photo" else "Choose / crop photo")
+            Text("Select photo")
         }
         if (settings.hasAvaPhoto) {
             OutlinedButton(
@@ -381,6 +381,45 @@ fun SettingsScreen(
                     style = SettingsTextStyles.hint
                 )
             }
+        }
+
+        SectionTitle("Discord night summary")
+        Text(
+            "Optional. Paste an incoming webhook URL from a Discord channel. " +
+                "When bedtime ends (STOP or wake timer), the same summary is posted there " +
+                "in addition to the phone notification. Needs Wi‑Fi.",
+            style = SettingsTextStyles.hint
+        )
+        OutlinedTextField(
+            value = settings.discordWebhookUrl,
+            onValueChange = { url ->
+                scope.launch {
+                    repository.update { it.copy(discordWebhookUrl = url.trim()) }
+                }
+            },
+            singleLine = true,
+            placeholder = {
+                Text("https://discord.com/api/webhooks/…", color = Color(0xFF6B7A8F))
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color(0xFFF2E8D5),
+                unfocusedTextColor = Color(0xFFF2E8D5),
+                focusedBorderColor = Color(0xFFC4A574),
+                unfocusedBorderColor = Color(0xFF6B7A8F),
+                cursorColor = Color(0xFFC4A574),
+                focusedContainerColor = Color(0xFF243044),
+                unfocusedContainerColor = Color(0xFF243044)
+            )
+        )
+        if (settings.discordWebhookUrl.isNotBlank() &&
+            !com.avas.bedtime.notify.DiscordWebhookSender.isValidWebhookUrl(settings.discordWebhookUrl)
+        ) {
+            Text(
+                "URL should start with https://discord.com/api/webhooks/",
+                color = Color(0xFFE8A0A0),
+                style = SettingsTextStyles.hint
+            )
         }
 
         SectionTitle("Plex account")

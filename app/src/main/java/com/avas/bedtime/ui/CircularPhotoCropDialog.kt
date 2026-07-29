@@ -15,12 +15,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -67,69 +68,80 @@ fun CircularPhotoCropDialog(
 
     Dialog(
         onDismissRequest = onCancel,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+            dismissOnClickOutside = false
+        )
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color(0xFF101820))
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
-            Text(
-                "Pinch to zoom in or out, drag to frame the face",
-                color = Color(0xFFF2E8D5),
-                fontSize = 15.sp
-            )
-            Spacer(Modifier.height(12.dp))
-            Box(
+            Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .onSizeChanged { viewport = it }
-                    .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            scale = (scale * zoom).coerceIn(0.35f, 6f)
-                            offset += pan
-                        }
-                    },
-                contentAlignment = Alignment.Center
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 12.dp, bottom = 88.dp)
             ) {
-                Image(
-                    bitmap = imageBitmap,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
-                            translationX = offset.x
-                            translationY = offset.y
-                        }
+                Text(
+                    "Pinch to zoom in or out, drag to frame the face",
+                    color = Color(0xFFF2E8D5),
+                    fontSize = 15.sp
                 )
-                ComposeCanvas(modifier = Modifier.fillMaxSize()) {
-                    val hole = ComposePath().apply {
-                        addOval(
-                            ComposeRect(
-                                left = (size.width - cropDiameterPx) / 2f,
-                                top = (size.height - cropDiameterPx) / 2f,
-                                right = (size.width + cropDiameterPx) / 2f,
-                                bottom = (size.height + cropDiameterPx) / 2f
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .onSizeChanged { viewport = it }
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(0.35f, 6f)
+                                offset += pan
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        bitmap = imageBitmap,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                translationX = offset.x
+                                translationY = offset.y
+                            }
+                    )
+                    ComposeCanvas(modifier = Modifier.fillMaxSize()) {
+                        val hole = ComposePath().apply {
+                            addOval(
+                                ComposeRect(
+                                    left = (size.width - cropDiameterPx) / 2f,
+                                    top = (size.height - cropDiameterPx) / 2f,
+                                    right = (size.width + cropDiameterPx) / 2f,
+                                    bottom = (size.height + cropDiameterPx) / 2f
+                                )
                             )
-                        )
-                    }
-                    clipPath(hole, clipOp = ClipOp.Difference) {
-                        drawRect(Color(0x99000000))
+                        }
+                        clipPath(hole, clipOp = ClipOp.Difference) {
+                            drawRect(Color(0x99000000))
+                        }
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
+
             Row(
                 modifier = Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .padding(bottom = 8.dp),
+                    .background(Color(0xFF101820))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 OutlinedButton(

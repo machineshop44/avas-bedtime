@@ -36,7 +36,9 @@ data class BedtimeSettings(
     val cooldownSeconds: Int = 25,
     /** Absolute path to copied Ava photo in app files; blank if none. */
     val avaPhotoPath: String = "",
-    val childName: String = "Ava"
+    val childName: String = "Ava",
+    /** Discord incoming webhook URL; blank = disabled. */
+    val discordWebhookUrl: String = ""
 ) {
     val isPlexSignedIn: Boolean get() = plexToken.isNotBlank()
     val pmsToken: String get() = serverAccessToken.ifBlank { plexToken }
@@ -79,6 +81,7 @@ class SettingsRepository(private val context: Context) {
         val cooldownSeconds = intPreferencesKey("cooldown_seconds")
         val avaPhotoPath = stringPreferencesKey("ava_photo_path")
         val childName = stringPreferencesKey("child_name")
+        val discordWebhookUrl = stringPreferencesKey("discord_webhook_url")
     }
 
     val settings: Flow<BedtimeSettings> = context.dataStore.data.map { prefs ->
@@ -104,7 +107,8 @@ class SettingsRepository(private val context: Context) {
             motionEnabled = prefs[Keys.motionEnabled] ?: true,
             cooldownSeconds = prefs[Keys.cooldownSeconds] ?: 25,
             avaPhotoPath = prefs[Keys.avaPhotoPath].orEmpty(),
-            childName = prefs[Keys.childName] ?: "Ava"
+            childName = prefs[Keys.childName] ?: "Ava",
+            discordWebhookUrl = prefs[Keys.discordWebhookUrl].orEmpty()
         )
     }
 
@@ -159,7 +163,8 @@ class SettingsRepository(private val context: Context) {
                 motionEnabled = prefs[Keys.motionEnabled] ?: true,
                 cooldownSeconds = prefs[Keys.cooldownSeconds] ?: 25,
                 avaPhotoPath = prefs[Keys.avaPhotoPath].orEmpty(),
-                childName = prefs[Keys.childName] ?: "Ava"
+                childName = prefs[Keys.childName] ?: "Ava",
+                discordWebhookUrl = prefs[Keys.discordWebhookUrl].orEmpty()
             )
             val next = transform(current)
             prefs[Keys.clientId] = next.clientId
@@ -184,6 +189,7 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.cooldownSeconds] = next.cooldownSeconds
             prefs[Keys.avaPhotoPath] = next.avaPhotoPath
             prefs[Keys.childName] = next.childName
+            prefs[Keys.discordWebhookUrl] = next.discordWebhookUrl
         }
     }
 }

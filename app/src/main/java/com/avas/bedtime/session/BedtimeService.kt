@@ -18,6 +18,7 @@ import com.avas.bedtime.data.NightSummary
 import com.avas.bedtime.data.ScheduleTime
 import com.avas.bedtime.detect.StirDetector
 import com.avas.bedtime.detect.StirSource
+import com.avas.bedtime.notify.DiscordWebhookSender
 import com.avas.bedtime.player.PlaylistPlayer
 import com.avas.bedtime.player.PlaylistProgress
 import com.avas.bedtime.plex.PlexApi
@@ -314,6 +315,11 @@ class BedtimeService : Service() {
         val app = applicationContext as? AvaBedtimeApp
         app?.nightLogRepository?.add(summary)
         postNightSummaryNotification(summary)
+        DiscordWebhookSender.sendNightSummaryAsync(
+            webhookUrl = latestSettings.discordWebhookUrl,
+            title = "${latestSettings.possessiveName} night",
+            body = summary.formatNotificationBody()
+        )
         Log.i(TAG, "Night summary:\n${summary.formatNotificationBody()}")
     }
 
