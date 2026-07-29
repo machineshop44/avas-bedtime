@@ -280,9 +280,9 @@ fun SettingsScreen(
 
         SectionTitle("Install on Ava's tablet")
         Text(
-            "Shares a zip over Nearby Share / Quick Share (raw APKs are often blocked). " +
-                "On her phone, open the zip → tap AvaBedtime-update.apk → Install " +
-                "(allow installs from Files if asked).",
+            "Share the APK over Nearby Share / Quick Share, Bluetooth, or Wi‑Fi. " +
+                "On her phone, open AvaBedtime-update.apk and tap Install " +
+                "(allow installs from Files if asked). If Quick Share greys out her phone, try Bluetooth.",
             style = SettingsTextStyles.hint
         )
         Button(
