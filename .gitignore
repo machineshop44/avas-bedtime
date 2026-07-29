@@ -1,0 +1,24 @@
+﻿# Android / Gradle
+.gradle/
+build/
+**/build/
+local.properties
+*.iml
+.idea/
+.kotlin/
+.cxx/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — never commit real Plex tokens
+.env
+.env.*
+*.keystore
+*.jks

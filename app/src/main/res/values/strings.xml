@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ava Bedtime</string>
+    <string name="notification_channel_name">Bedtime playback</string>
+    <string name="notification_title">Bedtime playing</string>
+    <string name="notification_text">Keeping Ava\'s playlist going</string>
+    <string name="night_summary_channel_name">Night summary</string>
+    <string name="night_summary_channel_desc">Shows how the night went after bedtime ends</string>
+    <string name="night_summary_title">Ava\'s night</string>
+</resources>

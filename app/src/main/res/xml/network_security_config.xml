@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Plex on the home LAN often uses plain HTTP on port 32400. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
