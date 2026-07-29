@@ -10,6 +10,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -49,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -96,30 +98,6 @@ fun SettingsScreen(
                 cropSource = bitmap
             }
         }
-    }
-
-    cropSource?.let { bitmap ->
-        CircularPhotoCropDialog(
-            source = bitmap,
-            onCancel = {
-                cropSource = null
-            },
-            onCropped = { cropped ->
-                scope.launch {
-                    val ok = withContext(Dispatchers.IO) {
-                        AvaPhotoStore.saveBitmap(context, cropped)
-                    }
-                    cropSource = null
-                    if (ok) {
-                        val path = AvaPhotoStore.photoFile(context).absolutePath
-                        repository.update { it.copy(avaPhotoPath = path) }
-                        status = "Photo saved"
-                    } else {
-                        status = "Could not save photo"
-                    }
-                }
-            }
-        )
     }
 
     fun api(clientId: String) = PlexApi(clientId.ifBlank { "ava-bedtime" })
@@ -261,6 +239,7 @@ fun SettingsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -773,6 +752,32 @@ fun SettingsScreen(
         ) {
             Text("Done")
         }
+    }
+
+    cropSource?.let { bitmap ->
+        CircularPhotoCropOverlay(
+            source = bitmap,
+            onCancel = { cropSource = null },
+            onCropped = { cropped ->
+                scope.launch {
+                    val ok = withContext(Dispatchers.IO) {
+                        AvaPhotoStore.saveBitmap(context, cropped)
+                    }
+                    cropSource = null
+                    if (ok) {
+                        val path = AvaPhotoStore.photoFile(context).absolutePath
+                        repository.update { it.copy(avaPhotoPath = path) }
+                        status = "Photo saved"
+                    } else {
+                        status = "Could not save photo"
+                    }
+                }
+            },
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(10f)
+        )
+    }
     }
 }
 

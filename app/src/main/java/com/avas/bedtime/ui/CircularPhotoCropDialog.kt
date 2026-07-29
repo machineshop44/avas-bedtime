@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -15,13 +16,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -48,16 +48,20 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import kotlin.math.min
 
+/**
+ * Full-screen crop overlay (not a Dialog). Dialogs on some phones (Pixel) ignore
+ * window insets and push Cancel / Use photo off-screen.
+ */
 @Composable
-fun CircularPhotoCropDialog(
+fun CircularPhotoCropOverlay(
     source: Bitmap,
     onCancel: () -> Unit,
     onCropped: (Bitmap) -> Unit
 ) {
+    BackHandler(onBack = onCancel)
+
     val imageBitmap = remember(source) { source.asImageBitmap() }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -66,102 +70,90 @@ fun CircularPhotoCropDialog(
     val cropDiameterDp = 280.dp
     val cropDiameterPx = with(density) { cropDiameterDp.toPx() }
 
-    Dialog(
-        onDismissRequest = onCancel,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false,
-            dismissOnClickOutside = false
-        )
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF101820))
+            .statusBarsPadding()
+            .navigationBarsPadding()
     ) {
+        Text(
+            "Pinch to zoom in or out, drag to frame the face",
+            color = Color(0xFFF2E8D5),
+            fontSize = 15.sp,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+        )
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF101820))
-                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+                .onSizeChanged { viewport = it }
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        scale = (scale * zoom).coerceIn(0.35f, 6f)
+                        offset += pan
+                    }
+                },
+            contentAlignment = Alignment.Center
         ) {
-            Column(
+            Image(
+                bitmap = imageBitmap,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 16.dp)
-                    .padding(top = 12.dp, bottom = 88.dp)
-            ) {
-                Text(
-                    "Pinch to zoom in or out, drag to frame the face",
-                    color = Color(0xFFF2E8D5),
-                    fontSize = 15.sp
-                )
-                Spacer(Modifier.height(12.dp))
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .onSizeChanged { viewport = it }
-                        .pointerInput(Unit) {
-                            detectTransformGestures { _, pan, zoom, _ ->
-                                scale = (scale * zoom).coerceIn(0.35f, 6f)
-                                offset += pan
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Image(
-                        bitmap = imageBitmap,
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                                translationX = offset.x
-                                translationY = offset.y
-                            }
-                    )
-                    ComposeCanvas(modifier = Modifier.fillMaxSize()) {
-                        val hole = ComposePath().apply {
-                            addOval(
-                                ComposeRect(
-                                    left = (size.width - cropDiameterPx) / 2f,
-                                    top = (size.height - cropDiameterPx) / 2f,
-                                    right = (size.width + cropDiameterPx) / 2f,
-                                    bottom = (size.height + cropDiameterPx) / 2f
-                                )
-                            )
-                        }
-                        clipPath(hole, clipOp = ClipOp.Difference) {
-                            drawRect(Color(0x99000000))
-                        }
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
                     }
+            )
+            ComposeCanvas(modifier = Modifier.fillMaxSize()) {
+                val hole = ComposePath().apply {
+                    addOval(
+                        ComposeRect(
+                            left = (size.width - cropDiameterPx) / 2f,
+                            top = (size.height - cropDiameterPx) / 2f,
+                            right = (size.width + cropDiameterPx) / 2f,
+                            bottom = (size.height + cropDiameterPx) / 2f
+                        )
+                    )
+                }
+                clipPath(hole, clipOp = ClipOp.Difference) {
+                    drawRect(Color(0x99000000))
                 }
             }
-
-            Row(
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF101820))
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            OutlinedButton(
+                onClick = onCancel,
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .background(Color(0xFF101820))
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onCancel,
-                    modifier = Modifier.weight(1f)
-                ) { Text("Cancel") }
-                Button(
-                    onClick = {
-                        val cropped = cropToCircle(
-                            source = source,
-                            viewport = viewport,
-                            scale = scale,
-                            offset = offset,
-                            cropDiameterPx = cropDiameterPx
-                        )
-                        onCropped(cropped)
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Use photo") }
-            }
+                    .weight(1f)
+                    .height(52.dp)
+            ) { Text("Cancel") }
+            Button(
+                onClick = {
+                    val cropped = cropToCircle(
+                        source = source,
+                        viewport = viewport,
+                        scale = scale,
+                        offset = offset,
+                        cropDiameterPx = cropDiameterPx
+                    )
+                    onCropped(cropped)
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(52.dp)
+            ) { Text("Use photo") }
         }
     }
 }
