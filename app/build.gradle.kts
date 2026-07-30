@@ -12,8 +12,8 @@ android {
         applicationId = "com.avas.bedtime"
         minSdk = 28
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.2.2"
+        versionCode = 9
+        versionName = "0.2.7"
     }
 
     buildTypes {

@@ -13,6 +13,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -43,21 +45,31 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.PI
+import kotlin.math.sin
+import kotlin.random.Random
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.avas.bedtime.data.BedtimeSettings
 import com.avas.bedtime.session.BedtimeService
 import com.avas.bedtime.ui.theme.AppThemeId
+import com.avas.bedtime.ui.theme.BedtimeThemeColors
 import com.avas.bedtime.ui.theme.themeColors
 import kotlin.math.max
 import kotlinx.coroutines.delay
@@ -72,11 +84,13 @@ private data class HomeMetrics(
     val buttonLabelSp: Float,
     val topPad: Dp,
     val gapAfterPhoto: Dp,
-    val gapBeforeButton: Dp
+    val gapBeforeButton: Dp,
+    val contentTopBias: Dp
 )
 
 @Composable
-private fun rememberHomeMetrics(maxHeight: Dp): HomeMetrics {
+private fun rememberHomeMetrics(maxHeight: Dp, maxWidth: Dp): HomeMetrics {
+    val tabletish = maxWidth >= 600.dp || maxHeight >= 900.dp
     return when {
         maxHeight < 640.dp -> HomeMetrics(
             photoSize = 88.dp,
@@ -86,9 +100,10 @@ private fun rememberHomeMetrics(maxHeight: Dp): HomeMetrics {
             statusSp = 18f,
             timerSp = 28f,
             buttonLabelSp = 34f,
-            topPad = 8.dp,
+            topPad = 12.dp,
             gapAfterPhoto = 6.dp,
-            gapBeforeButton = 10.dp
+            gapBeforeButton = 10.dp,
+            contentTopBias = 44.dp
         )
         maxHeight < 740.dp -> HomeMetrics(
             photoSize = 120.dp,
@@ -98,21 +113,36 @@ private fun rememberHomeMetrics(maxHeight: Dp): HomeMetrics {
             statusSp = 20f,
             timerSp = 32f,
             buttonLabelSp = 38f,
-            topPad = 12.dp,
+            topPad = 20.dp,
             gapAfterPhoto = 10.dp,
-            gapBeforeButton = 12.dp
+            gapBeforeButton = 12.dp,
+            contentTopBias = 56.dp
         )
-        else -> HomeMetrics(
+        tabletish -> HomeMetrics(
             photoSize = 168.dp,
-            buttonSize = 230.dp,
+            buttonSize = 220.dp,
             nameSp = 48f,
             themeSp = 26f,
             statusSp = 24f,
             timerSp = 36f,
-            buttonLabelSp = 46f,
-            topPad = 20.dp,
-            gapAfterPhoto = 14.dp,
-            gapBeforeButton = 18.dp
+            buttonLabelSp = 44f,
+            topPad = 56.dp,
+            gapAfterPhoto = 16.dp,
+            gapBeforeButton = 16.dp,
+            contentTopBias = 96.dp
+        )
+        else -> HomeMetrics(
+            photoSize = 156.dp,
+            buttonSize = 210.dp,
+            nameSp = 46f,
+            themeSp = 24f,
+            statusSp = 22f,
+            timerSp = 34f,
+            buttonLabelSp = 42f,
+            topPad = 28.dp,
+            gapAfterPhoto = 12.dp,
+            gapBeforeButton = 14.dp,
+            contentTopBias = 64.dp
         )
     }
 }
@@ -180,12 +210,11 @@ fun KidHomeScreen(
             .fillMaxSize()
             .background(colors.background)
     ) {
-        val metrics = rememberHomeMetrics(maxHeight)
+        SoftAtmosphere(colors = colors)
+        ThemePasserby(colors = colors)
+        val metrics = rememberHomeMetrics(maxHeight, maxWidth)
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-        ) {
+        Column(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -200,35 +229,72 @@ fun KidHomeScreen(
                         }.getOrNull()
                     }
                     if (bitmap != null) {
-                        Image(
-                            bitmap = bitmap,
-                            contentDescription = settings.displayName,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(metrics.photoSize)
-                                .clip(CircleShape)
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            // Soft bloom behind the photo
+                            Box(
+                                modifier = Modifier
+                                    .size(metrics.photoSize + 36.dp)
+                                    .background(
+                                        Brush.radialGradient(
+                                            listOf(
+                                                colors.subtitle.copy(alpha = 0.28f),
+                                                Color.Transparent
+                                            )
+                                        ),
+                                        shape = CircleShape
+                                    )
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .shadow(
+                                        elevation = 28.dp,
+                                        shape = CircleShape,
+                                        ambientColor = colors.shadowTint,
+                                        spotColor = colors.shadowTint,
+                                        clip = false
+                                    )
+                                    .size(metrics.photoSize + 12.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.photoRing)
+                                    .padding(5.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    bitmap = bitmap,
+                                    contentDescription = settings.displayName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(CircleShape)
+                                )
+                            }
+                        }
                         Spacer(Modifier.height(metrics.gapAfterPhoto))
                     }
                 }
                 Text(
                     text = settings.possessiveName,
                     style = MaterialTheme.typography.headlineLarge.copy(
-                        fontSize = metrics.nameSp.sp
+                        fontSize = metrics.nameSp.sp,
+                        letterSpacing = 0.5.sp
                     ),
                     color = colors.title,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                Spacer(Modifier.height(2.dp))
                 Text(
                     text = when (colors.id) {
                         AppThemeId.Unicorn -> "Unicorn Bedtime"
                         AppThemeId.Rainbow -> "Rainbow Bedtime"
                         AppThemeId.Ocean -> "Ocean Bedtime"
-                        AppThemeId.Night -> "Bedtime"
+                        AppThemeId.Forest -> "Forest Bedtime"
+                        AppThemeId.Galaxy -> "Galaxy Bedtime"
+                        AppThemeId.Night -> "Night Bedtime"
                     },
                     style = MaterialTheme.typography.titleLarge.copy(
-                        fontSize = metrics.themeSp.sp
+                        fontSize = metrics.themeSp.sp,
+                        letterSpacing = 0.3.sp
                     ),
                     color = colors.subtitle,
                     maxLines = 1,
@@ -240,8 +306,9 @@ fun KidHomeScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
-                verticalArrangement = Arrangement.Center,
+                    .padding(horizontal = 24.dp)
+                    .padding(top = metrics.contentTopBias),
+                verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
@@ -292,6 +359,7 @@ fun KidHomeScreen(
                         label = "RESTART",
                         color = colors.startButton,
                         textColor = colors.buttonText,
+                        shadowTint = colors.shadowTint,
                         scale = pulse,
                         size = metrics.buttonSize,
                         labelSp = metrics.buttonLabelSp,
@@ -304,6 +372,12 @@ fun KidHomeScreen(
                     Spacer(Modifier.height(12.dp))
                     Box(
                         modifier = Modifier
+                            .shadow(
+                                elevation = 8.dp,
+                                shape = RoundedCornerShape(28.dp),
+                                ambientColor = colors.shadowTint,
+                                spotColor = colors.shadowTint
+                            )
                             .widthIn(min = 180.dp)
                             .clip(RoundedCornerShape(28.dp))
                             .background(colors.stopButton)
@@ -326,6 +400,7 @@ fun KidHomeScreen(
                         label = "START",
                         color = if (ready) colors.startButton else colors.startButtonDisabled,
                         textColor = colors.buttonText,
+                        shadowTint = colors.shadowTint,
                         scale = if (ready) sparkleScale else 1f,
                         size = metrics.buttonSize,
                         labelSp = metrics.buttonLabelSp,
@@ -347,6 +422,14 @@ fun KidHomeScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .shadow(
+                        elevation = 22.dp,
+                        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                        ambientColor = colors.shadowTint,
+                        spotColor = colors.shadowTint,
+                        clip = false
+                    )
+                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                     .background(colors.settingsBar)
                     .clickable(onClick = onOpenSettings)
                     .navigationBarsPadding()
@@ -363,12 +446,113 @@ fun KidHomeScreen(
     }
 }
 
+@Composable
+private fun SoftAtmosphere(colors: BedtimeThemeColors) {
+    val twinkle = rememberInfiniteTransition(label = "twinkle")
+    val phase by twinkle.animateFloat(
+        initialValue = 0f,
+        targetValue = (2f * PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(7000), RepeatMode.Restart),
+        label = "phase"
+    )
+    val sparkles = remember {
+        List(28) { i ->
+            val rng = Random(i * 97 + 13)
+            Sparkle(
+                xFrac = rng.nextFloat(),
+                yFrac = rng.nextFloat() * 0.72f,
+                radius = 1.5f + rng.nextFloat() * 2.8f,
+                speed = 0.6f + rng.nextFloat() * 1.4f,
+                offset = rng.nextFloat() * 6f
+            )
+        }
+    }
+    val density = LocalDensity.current
+
+    // Soft cloud orbs
+    Box(modifier = Modifier.fillMaxSize()) {
+        SoftOrb(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .offset(x = (-40).dp, y = 40.dp)
+                .size(180.dp),
+            color = colors.subtitle.copy(alpha = 0.22f)
+        )
+        SoftOrb(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = 50.dp, y = 90.dp)
+                .size(220.dp),
+            color = colors.accentChip.copy(alpha = 0.55f)
+        )
+        SoftOrb(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .offset(x = (-60).dp, y = 40.dp)
+                .size(200.dp),
+            color = Color.White.copy(alpha = 0.18f)
+        )
+        SoftOrb(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .offset(x = 40.dp, y = (-120).dp)
+                .size(240.dp),
+            color = colors.subtitle.copy(alpha = 0.18f)
+        )
+    }
+
+    // Twinkling stars
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        sparkles.forEach { s ->
+            val alpha = (0.15f + 0.55f * ((sin((phase * s.speed) + s.offset) + 1f) / 2f))
+                .coerceIn(0.08f, 0.75f)
+            drawCircle(
+                color = Color.White.copy(alpha = alpha),
+                radius = with(density) { s.radius.dp.toPx() },
+                center = Offset(size.width * s.xFrac, size.height * s.yFrac)
+            )
+        }
+    }
+
+    // Gentle vignette
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    0f to Color.Transparent,
+                    0.75f to Color.Transparent,
+                    1f to colors.shadowTint.copy(alpha = 0.22f)
+                )
+            )
+    )
+}
+
+@Composable
+private fun SoftOrb(modifier: Modifier, color: Color) {
+    Box(
+        modifier = modifier.background(
+            Brush.radialGradient(listOf(color, Color.Transparent)),
+            shape = CircleShape
+        )
+    )
+}
+
+private data class Sparkle(
+    val xFrac: Float,
+    val yFrac: Float,
+    val radius: Float,
+    val speed: Float,
+    val offset: Float
+)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BigRoundButton(
     label: String,
-    color: androidx.compose.ui.graphics.Color,
-    textColor: androidx.compose.ui.graphics.Color,
+    color: Color,
+    textColor: Color,
+    shadowTint: Color,
     scale: Float,
     size: Dp,
     labelSp: Float,
@@ -377,9 +561,23 @@ private fun BigRoundButton(
     Box(
         modifier = Modifier
             .scale(scale)
+            .shadow(
+                elevation = 32.dp,
+                shape = CircleShape,
+                ambientColor = shadowTint,
+                spotColor = shadowTint,
+                clip = false
+            )
             .size(size)
             .clip(CircleShape)
-            .background(color)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        color.copy(alpha = 1f),
+                        color.copy(alpha = 0.88f)
+                    )
+                )
+            )
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -389,7 +587,10 @@ private fun BigRoundButton(
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.headlineLarge.copy(fontSize = labelSp.sp),
+            style = MaterialTheme.typography.headlineLarge.copy(
+                fontSize = labelSp.sp,
+                letterSpacing = 1.2.sp
+            ),
             color = textColor
         )
     }
