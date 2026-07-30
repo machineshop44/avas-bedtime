@@ -1,0 +1,24 @@
+---
+description: Always copy Ava Bedtime APKs to Google Drive apks folder after builds/updates
+alwaysApply: true
+---
+
+# Publish APKs to Google Drive
+
+Whenever you build or ship an Ava Bedtime app update (after `assembleDebug` / `assembleRelease`, or when telling Andrew an update is ready):
+
+1. Copy the built APK into **`G:\My Drive\apks`**.
+2. Prefer running from the project root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ".\publish-apk-to-drive.ps1"
+```
+
+   Or with a fresh build: `.\publish-apk-to-drive.ps1 -Build`
+
+3. That script writes:
+   - `AvaBedtime-<versionName>(<versionCode>).apk`
+   - `AvaBedtime-latest.apk` (same file, easy to find)
+
+4. Do this even if GitHub sync is separate — Drive `apks` is the handoff folder for phones.
+5. If `G:\My Drive` is missing, say so; do not silently skip.
