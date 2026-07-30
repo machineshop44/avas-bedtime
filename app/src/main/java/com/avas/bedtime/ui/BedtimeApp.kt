@@ -2,6 +2,8 @@ package com.avas.bedtime.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,7 +44,12 @@ fun BedtimeApp() {
         screen = Screen.Kid
     }
 
-    Surface(modifier = Modifier.fillMaxSize()) {
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding(),
+        color = MaterialTheme.colorScheme.background
+    ) {
         when (screen) {
             Screen.Kid -> KidHomeScreen(
                 settings = settings,

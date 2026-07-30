@@ -76,6 +76,18 @@ fun SettingsScreen(
     val signIn by app.plexSignIn.state.collectAsStateWithLifecycle()
     val nights by app.nightLogRepository.nights.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
+    val appVersionLabel = remember(context) {
+        runCatching {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            val code = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                info.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                info.versionCode.toLong()
+            }
+            "${info.versionName ?: "?"} ($code)"
+        }.getOrDefault("unknown")
+    }
 
     var status by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -256,12 +268,17 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text("Settings", style = SettingsTextStyles.screenTitle)
+            Text(
+                "App version $appVersionLabel",
+                style = SettingsTextStyles.hint
+            )
 
         SectionTitle("Install on Ava's tablet")
         Text(
             "Share the APK over Nearby Share / Quick Share, Bluetooth, or Wi‑Fi. " +
                 "On her phone, open AvaBedtime-update.apk and tap Install " +
-                "(allow installs from Files if asked). If Quick Share greys out her phone, try Bluetooth.",
+                "(allow installs from Files if asked). If Quick Share greys out her phone, try Bluetooth. " +
+                "After updating, check that App version matches this device ($appVersionLabel).",
             style = SettingsTextStyles.hint
         )
         Button(

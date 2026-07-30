@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -58,11 +57,13 @@ import kotlin.math.min
 fun CircularPhotoCropOverlay(
     source: Bitmap,
     onCancel: () -> Unit,
-    onCropped: (Bitmap) -> Unit
+    onCropped: (Bitmap) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onCancel)
 
-    val imageBitmap = remember(source) { source.asImageBitmap() }
+    var workingBitmap by remember(source) { mutableStateOf(source) }
+    val imageBitmap = remember(workingBitmap) { workingBitmap.asImageBitmap() }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
@@ -71,14 +72,13 @@ fun CircularPhotoCropOverlay(
     val cropDiameterPx = with(density) { cropDiameterDp.toPx() }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(Color(0xFF101820))
-            .statusBarsPadding()
             .navigationBarsPadding()
     ) {
         Text(
-            "Pinch to zoom in or out, drag to frame the face",
+            "Pinch to zoom, drag to frame, or rotate if it looks sideways",
             color = Color(0xFFF2E8D5),
             fontSize = 15.sp,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
@@ -130,8 +130,8 @@ fun CircularPhotoCropOverlay(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Color(0xFF101820))
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 12.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             OutlinedButton(
                 onClick = onCancel,
@@ -139,10 +139,20 @@ fun CircularPhotoCropOverlay(
                     .weight(1f)
                     .height(52.dp)
             ) { Text("Cancel") }
+            OutlinedButton(
+                onClick = {
+                    workingBitmap = com.avas.bedtime.data.AvaPhotoStore.rotate90Clockwise(workingBitmap)
+                    scale = 1f
+                    offset = Offset.Zero
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(52.dp)
+            ) { Text("Rotate") }
             Button(
                 onClick = {
                     val cropped = cropToCircle(
-                        source = source,
+                        source = workingBitmap,
                         viewport = viewport,
                         scale = scale,
                         offset = offset,

@@ -19,7 +19,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,7 +30,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +49,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -58,6 +61,61 @@ import com.avas.bedtime.ui.theme.AppThemeId
 import com.avas.bedtime.ui.theme.themeColors
 import kotlin.math.max
 import kotlinx.coroutines.delay
+
+private data class HomeMetrics(
+    val photoSize: Dp,
+    val buttonSize: Dp,
+    val nameSp: Float,
+    val themeSp: Float,
+    val statusSp: Float,
+    val timerSp: Float,
+    val buttonLabelSp: Float,
+    val topPad: Dp,
+    val gapAfterPhoto: Dp,
+    val gapBeforeButton: Dp
+)
+
+@Composable
+private fun rememberHomeMetrics(maxHeight: Dp): HomeMetrics {
+    return when {
+        maxHeight < 640.dp -> HomeMetrics(
+            photoSize = 88.dp,
+            buttonSize = 150.dp,
+            nameSp = 34f,
+            themeSp = 18f,
+            statusSp = 18f,
+            timerSp = 28f,
+            buttonLabelSp = 34f,
+            topPad = 8.dp,
+            gapAfterPhoto = 6.dp,
+            gapBeforeButton = 10.dp
+        )
+        maxHeight < 740.dp -> HomeMetrics(
+            photoSize = 120.dp,
+            buttonSize = 180.dp,
+            nameSp = 40f,
+            themeSp = 22f,
+            statusSp = 20f,
+            timerSp = 32f,
+            buttonLabelSp = 38f,
+            topPad = 12.dp,
+            gapAfterPhoto = 10.dp,
+            gapBeforeButton = 12.dp
+        )
+        else -> HomeMetrics(
+            photoSize = 168.dp,
+            buttonSize = 230.dp,
+            nameSp = 48f,
+            themeSp = 26f,
+            statusSp = 24f,
+            timerSp = 36f,
+            buttonLabelSp = 46f,
+            topPad = 20.dp,
+            gapAfterPhoto = 14.dp,
+            gapBeforeButton = 18.dp
+        )
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -117,165 +175,190 @@ fun KidHomeScreen(
         label = "sparkleScale"
     )
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background)
     ) {
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(top = 28.dp, start = 24.dp, end = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            if (settings.hasAvaPhoto) {
-                val bitmap = remember(settings.avaPhotoPath) {
-                    runCatching {
-                        android.graphics.BitmapFactory.decodeFile(settings.avaPhotoPath)
-                            ?.asImageBitmap()
-                    }.getOrNull()
-                }
-                if (bitmap != null) {
-                    Image(
-                        bitmap = bitmap,
-                        contentDescription = settings.displayName,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(168.dp)
-                            .clip(CircleShape)
-                    )
-                    Spacer(Modifier.height(14.dp))
-                }
-            }
-            Text(
-                text = settings.possessiveName,
-                style = MaterialTheme.typography.headlineLarge.copy(fontSize = 48.sp),
-                color = colors.title
-            )
-            Text(
-                text = when (colors.id) {
-                    AppThemeId.Unicorn -> "Unicorn Bedtime"
-                    AppThemeId.Rainbow -> "Rainbow Bedtime"
-                    AppThemeId.Ocean -> "Ocean Bedtime"
-                    AppThemeId.Night -> "Bedtime"
-                },
-                style = MaterialTheme.typography.titleLarge.copy(fontSize = 26.sp),
-                color = colors.subtitle
-            )
-        }
+        val metrics = rememberHomeMetrics(maxHeight)
 
         Column(
             modifier = Modifier
-                .align(Alignment.Center)
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .fillMaxSize()
         ) {
-            Text(
-                text = when {
-                    session.active && session.statusMessage == "Starting over" ->
-                        "Heard a stir — starting over"
-                    session.active -> "Sleepy music is on"
-                    !ready -> "Grown-ups: pick music in Settings"
-                    else -> settings.playlistTitle.ifBlank { "Ready for bed" }
-                },
-                style = MaterialTheme.typography.titleLarge.copy(fontSize = 24.sp),
-                color = colors.body,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            if (!session.active && ready) {
-                Text(
-                    text = when (settings.resolvedEndMode) {
-                        com.avas.bedtime.data.EndMode.WakeUp ->
-                            "Stops at ${settings.wakeLabel}"
-                        com.avas.bedtime.data.EndMode.Duration ->
-                            "Plays ${settings.timerHours} hours"
-                    },
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp),
-                    color = colors.subtitle,
-                    modifier = Modifier.padding(bottom = 18.dp)
-                )
-            } else {
-                Spacer(Modifier.height(10.dp))
-            }
-            if (session.active) {
-                Text(
-                    text = BedtimeService.formatRemaining(remaining),
-                    style = MaterialTheme.typography.headlineLarge.copy(fontSize = 36.sp),
-                    color = colors.title,
-                    modifier = Modifier.padding(bottom = 22.dp)
-                )
-            }
-
-            if (session.active) {
-                BigRoundButton(
-                    label = "RESTART",
-                    color = colors.startButton,
-                    textColor = colors.buttonText,
-                    scale = pulse,
-                    onClick = {
-                        val intent = Intent(context, BedtimeService::class.java)
-                            .setAction(BedtimeService.ACTION_RESTART)
-                        context.startService(intent)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = metrics.topPad, start = 20.dp, end = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (settings.hasAvaPhoto) {
+                    val bitmap = remember(settings.avaPhotoPath) {
+                        runCatching {
+                            android.graphics.BitmapFactory.decodeFile(settings.avaPhotoPath)
+                                ?.asImageBitmap()
+                        }.getOrNull()
                     }
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = settings.displayName,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(metrics.photoSize)
+                                .clip(CircleShape)
+                        )
+                        Spacer(Modifier.height(metrics.gapAfterPhoto))
+                    }
+                }
+                Text(
+                    text = settings.possessiveName,
+                    style = MaterialTheme.typography.headlineLarge.copy(
+                        fontSize = metrics.nameSp.sp
+                    ),
+                    color = colors.title,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Spacer(Modifier.height(18.dp))
-                Box(
-                    modifier = Modifier
-                        .widthIn(min = 200.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(colors.stopButton)
-                        .clickable {
+                Text(
+                    text = when (colors.id) {
+                        AppThemeId.Unicorn -> "Unicorn Bedtime"
+                        AppThemeId.Rainbow -> "Rainbow Bedtime"
+                        AppThemeId.Ocean -> "Ocean Bedtime"
+                        AppThemeId.Night -> "Bedtime"
+                    },
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontSize = metrics.themeSp.sp
+                    ),
+                    color = colors.subtitle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = when {
+                        session.active && session.statusMessage == "Starting over" ->
+                            "Heard a stir — starting over"
+                        session.active -> "Sleepy music is on"
+                        !ready -> "Grown-ups: pick music in Settings"
+                        else -> settings.playlistTitle.ifBlank { "Ready for bed" }
+                    },
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontSize = metrics.statusSp.sp
+                    ),
+                    color = colors.body,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                if (!session.active && ready) {
+                    Text(
+                        text = when (settings.resolvedEndMode) {
+                            com.avas.bedtime.data.EndMode.WakeUp ->
+                                "Stops at ${settings.wakeLabel}"
+                            com.avas.bedtime.data.EndMode.Duration ->
+                                "Plays ${settings.timerHours} hours"
+                        },
+                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                        color = colors.subtitle,
+                        modifier = Modifier.padding(bottom = metrics.gapBeforeButton)
+                    )
+                } else {
+                    Spacer(Modifier.height(metrics.gapBeforeButton))
+                }
+                if (session.active) {
+                    Text(
+                        text = BedtimeService.formatRemaining(remaining),
+                        style = MaterialTheme.typography.headlineLarge.copy(
+                            fontSize = metrics.timerSp.sp
+                        ),
+                        color = colors.title,
+                        modifier = Modifier.padding(bottom = metrics.gapBeforeButton)
+                    )
+                }
+
+                if (session.active) {
+                    BigRoundButton(
+                        label = "RESTART",
+                        color = colors.startButton,
+                        textColor = colors.buttonText,
+                        scale = pulse,
+                        size = metrics.buttonSize,
+                        labelSp = metrics.buttonLabelSp,
+                        onClick = {
                             val intent = Intent(context, BedtimeService::class.java)
-                                .setAction(BedtimeService.ACTION_STOP)
+                                .setAction(BedtimeService.ACTION_RESTART)
                             context.startService(intent)
                         }
-                        .padding(horizontal = 28.dp, vertical = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "STOP",
-                        style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp),
-                        color = colors.buttonText
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .widthIn(min = 180.dp)
+                            .clip(RoundedCornerShape(28.dp))
+                            .background(colors.stopButton)
+                            .clickable {
+                                val intent = Intent(context, BedtimeService::class.java)
+                                    .setAction(BedtimeService.ACTION_STOP)
+                                context.startService(intent)
+                            }
+                            .padding(horizontal = 28.dp, vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "STOP",
+                            style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
+                            color = colors.buttonText
+                        )
+                    }
+                } else {
+                    BigRoundButton(
+                        label = "START",
+                        color = if (ready) colors.startButton else colors.startButtonDisabled,
+                        textColor = colors.buttonText,
+                        scale = if (ready) sparkleScale else 1f,
+                        size = metrics.buttonSize,
+                        labelSp = metrics.buttonLabelSp,
+                        onClick = {
+                            if (!ready) {
+                                onOpenSettings()
+                                return@BigRoundButton
+                            }
+                            if (!hasPermissions()) {
+                                permissionLauncher.launch(neededPermissions())
+                                return@BigRoundButton
+                            }
+                            startBedtime(context)
+                        }
                     )
                 }
-            } else {
-                BigRoundButton(
-                    label = "START",
-                    color = if (ready) colors.startButton else colors.startButtonDisabled,
-                    textColor = colors.buttonText,
-                    scale = if (ready) sparkleScale else 1f,
-                    onClick = {
-                        if (!ready) {
-                            onOpenSettings()
-                            return@BigRoundButton
-                        }
-                        if (!hasPermissions()) {
-                            permissionLauncher.launch(neededPermissions())
-                            return@BigRoundButton
-                        }
-                        startBedtime(context)
-                    }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(colors.settingsBar)
+                    .clickable(onClick = onOpenSettings)
+                    .navigationBarsPadding()
+                    .padding(vertical = 16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
+                    color = colors.settingsText
                 )
             }
-        }
-
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .background(colors.settingsBar)
-                .clickable(onClick = onOpenSettings)
-                .navigationBarsPadding()
-                .padding(vertical = 18.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "Settings",
-                style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp),
-                color = colors.settingsText
-            )
         }
     }
 }
@@ -287,12 +370,14 @@ private fun BigRoundButton(
     color: androidx.compose.ui.graphics.Color,
     textColor: androidx.compose.ui.graphics.Color,
     scale: Float,
+    size: Dp,
+    labelSp: Float,
     onClick: () -> Unit
 ) {
     Box(
         modifier = Modifier
             .scale(scale)
-            .size(230.dp)
+            .size(size)
             .clip(CircleShape)
             .background(color)
             .combinedClickable(
@@ -304,7 +389,7 @@ private fun BigRoundButton(
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.headlineLarge.copy(fontSize = 46.sp),
+            style = MaterialTheme.typography.headlineLarge.copy(fontSize = labelSp.sp),
             color = textColor
         )
     }
