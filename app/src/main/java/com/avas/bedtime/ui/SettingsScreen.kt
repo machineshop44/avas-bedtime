@@ -8,7 +8,6 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,12 +24,18 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -48,6 +53,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -60,10 +66,13 @@ import com.avas.bedtime.data.AvaPhotoStore
 import com.avas.bedtime.data.BedtimeSettings
 import com.avas.bedtime.data.SettingsRepository
 import com.avas.bedtime.plex.PlexApi
+import com.avas.bedtime.ui.theme.AppThemeId
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     settings: BedtimeSettings,
@@ -265,20 +274,13 @@ fun SettingsScreen(
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text("Settings", style = SettingsTextStyles.screenTitle)
-            Text(
-                "App version $appVersionLabel",
-                style = SettingsTextStyles.hint
-            )
 
         SectionTitle("Install on Ava's tablet")
         Text(
-            "Share the APK over Nearby Share / Quick Share, Bluetooth, or Wi‑Fi. " +
-                "On her phone, open AvaBedtime-update.apk and tap Install " +
-                "(allow installs from Files if asked). If Quick Share greys out her phone, try Bluetooth. " +
-                "After updating, check that App version matches this device ($appVersionLabel).",
+            "Share the APK, then install on her phone (allow installs from Files if asked).",
             style = SettingsTextStyles.hint
         )
         Button(
@@ -289,10 +291,6 @@ fun SettingsScreen(
         }
 
         SectionTitle("Child's name")
-        Text(
-            "Shown big on the home screen as ${settings.possessiveName}.",
-            style = SettingsTextStyles.hint
-        )
         OutlinedTextField(
             value = settings.childName,
             onValueChange = { name ->
@@ -304,22 +302,10 @@ fun SettingsScreen(
             },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color(0xFFF2E8D5),
-                unfocusedTextColor = Color(0xFFF2E8D5),
-                focusedBorderColor = Color(0xFFC4A574),
-                unfocusedBorderColor = Color(0xFF6B7A8F),
-                cursorColor = Color(0xFFC4A574),
-                focusedContainerColor = Color(0xFF243044),
-                unfocusedContainerColor = Color(0xFF243044)
-            )
+            colors = settingsFieldColors()
         )
 
         SectionTitle("${settings.possessiveName} photo")
-        Text(
-            "Shows large on the home screen. After you pick a picture you can crop it to a circle.",
-            style = SettingsTextStyles.hint
-        )
         if (settings.hasAvaPhoto) {
             val bitmap = remember(settings.avaPhotoPath) {
                 runCatching {
@@ -332,60 +318,51 @@ fun SettingsScreen(
                     contentDescription = settings.displayName,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(140.dp)
+                        .size(112.dp)
                         .clip(CircleShape)
+                        .align(Alignment.CenterHorizontally)
                 )
             }
         }
-        Button(
-            onClick = {
-                photoPicker.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                )
-            },
-            modifier = Modifier.fillMaxWidth()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("Select photo")
-        }
-        if (settings.hasAvaPhoto) {
-            OutlinedButton(
+            Button(
                 onClick = {
-                    scope.launch {
-                        AvaPhotoStore.clear(context)
-                        repository.update { it.copy(avaPhotoPath = "") }
-                        status = "Photo removed"
-                    }
+                    photoPicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.weight(1f)
             ) {
-                Text("Remove photo")
+                Text("Select photo")
+            }
+            if (settings.hasAvaPhoto) {
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            AvaPhotoStore.clear(context)
+                            repository.update { it.copy(avaPhotoPath = "") }
+                            status = "Photo removed"
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Remove")
+                }
             }
         }
 
         SectionTitle("Last night")
         val lastNight = nights.firstOrNull()
         if (lastNight == null) {
-            Text(
-                "No nights logged yet — start bedtime once.",
-                style = SettingsTextStyles.hint
-            )
+            Text("No nights logged yet.", style = SettingsTextStyles.hint)
         } else {
             Text(lastNight.formatSettingsBlock(), style = SettingsTextStyles.body)
-            if (nights.size > 1) {
-                Text(
-                    "${nights.size} nights saved (newest first).",
-                    style = SettingsTextStyles.hint
-                )
-            }
         }
 
         SectionTitle("Discord night summary")
-        Text(
-            "Optional. Paste an incoming webhook URL from a Discord channel. " +
-                "When bedtime ends (STOP or wake timer), the same summary is posted there " +
-                "in addition to the phone notification. Needs Wi‑Fi.",
-            style = SettingsTextStyles.hint
-        )
         OutlinedTextField(
             value = settings.discordWebhookUrl,
             onValueChange = { url ->
@@ -395,42 +372,27 @@ fun SettingsScreen(
             },
             singleLine = true,
             placeholder = {
-                Text("https://discord.com/api/webhooks/…", color = Color(0xFF6B7A8F))
+                Text("Webhook URL (optional)", color = Color(0xFF6B7A8F))
             },
             modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color(0xFFF2E8D5),
-                unfocusedTextColor = Color(0xFFF2E8D5),
-                focusedBorderColor = Color(0xFFC4A574),
-                unfocusedBorderColor = Color(0xFF6B7A8F),
-                cursorColor = Color(0xFFC4A574),
-                focusedContainerColor = Color(0xFF243044),
-                unfocusedContainerColor = Color(0xFF243044)
-            )
+            colors = settingsFieldColors()
         )
         if (settings.discordWebhookUrl.isNotBlank() &&
             !com.avas.bedtime.notify.DiscordWebhookSender.isValidWebhookUrl(settings.discordWebhookUrl)
         ) {
             Text(
-                "URL should start with https://discord.com/api/webhooks/",
+                "Needs a Discord webhook URL",
                 color = Color(0xFFE8A0A0),
                 style = SettingsTextStyles.hint
             )
         }
 
-        SectionTitle("Plex account")
+        SectionTitle("Plex")
         if (settings.isPlexSignedIn) {
             Text(
                 "Signed in as ${settings.plexUsername.ifBlank { "Plex user" }}",
                 style = SettingsTextStyles.body
             )
-            if (settings.playlistTitle.isNotBlank()) {
-                Text(
-                    "Bedtime playlist: ${settings.playlistTitle}",
-                    style = SettingsTextStyles.body,
-                    color = Color(0xFFC4A574)
-                )
-            }
             OutlinedButton(
                 onClick = {
                     scope.launch {
@@ -454,7 +416,7 @@ fun SettingsScreen(
             ) { Text("Sign out") }
         } else {
             Text(
-                "1) Tap Sign in with Plex\n2) Log in on the Plex page\n3) Come back here (or tap Check again)",
+                "Sign in, then pick a server and playlist below.",
                 style = SettingsTextStyles.hint
             )
             if (signIn.pinCode != null) {
@@ -468,13 +430,17 @@ fun SettingsScreen(
             }
             Button(
                 enabled = !signIn.waiting,
-                onClick = { app.plexSignIn.startSignIn() }
+                onClick = { app.plexSignIn.startSignIn() },
+                modifier = Modifier.fillMaxWidth()
             ) { Text("Sign in with Plex") }
             if (signIn.waiting || signIn.authUrl != null) {
-                OutlinedButton(onClick = { app.plexSignIn.checkNow() }) {
+                OutlinedButton(
+                    onClick = { app.plexSignIn.checkNow() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Text("I've signed in — Check again")
                 }
-                OutlinedButton(onClick = { app.plexSignIn.openBrowserAgain() }) {
+                TextButton(onClick = { app.plexSignIn.openBrowserAgain() }) {
                     Text("Open Plex page again")
                 }
             }
@@ -488,179 +454,172 @@ fun SettingsScreen(
         }
 
         if (settings.isPlexSignedIn && servers.isNotEmpty()) {
-            SectionTitle("1. Server")
-            Text(
-                "Tap a server — the app will try home Wi‑Fi first, then remote automatically.",
-                style = SettingsTextStyles.hint
-            )
-            servers.forEach { server ->
-                val selected = settings.serverName == server.name ||
-                    api(settings.clientId).rankedConnections(server)
-                        .any { it.uri.trimEnd('/') == settings.serverUrl }
-                val activeConn = api(settings.clientId).rankedConnections(server)
-                    .firstOrNull { it.uri.trimEnd('/') == settings.serverUrl }
-                SelectRow(
-                    title = server.name,
-                    subtitle = when {
-                        selected && activeConn != null -> "Using ${activeConn.label}"
-                        selected && settings.serverUrl.isNotBlank() -> "Connected"
-                        else -> "Tap to connect"
-                    },
-                    selected = selected,
-                    onClick = {
-                        scope.launch {
-                            busy = true
-                            status = "Connecting to ${server.name}…"
-                            val plex = api(settings.clientId)
-                            val found = plex.findReachableConnection(server, server.accessToken)
-                            val conn = found.getOrNull()
-                            if (conn != null) {
-                                val url = conn.uri.trimEnd('/')
-                                repository.update {
-                                    it.copy(
-                                        serverUrl = url,
-                                        serverName = server.name,
-                                        serverAccessToken = server.accessToken,
-                                        playlistId = "",
-                                        playlistTitle = ""
-                                    )
-                                }
-                                loadPlaylistsForUrl(url, server.accessToken, settings.clientId)
-                                status = "Using ${conn.label} · ${playlists.size} playlists"
-                            } else {
-                                status = found.exceptionOrNull()?.message
-                                    ?: "Could not reach ${server.name}"
-                            }
-                            busy = false
-                        }
+            SettingsDropdown(
+                label = "Server",
+                selectedText = settings.serverName.ifBlank { "Choose server" },
+                options = servers,
+                optionLabel = { it.name },
+                optionSupporting = { server ->
+                    val activeConn = api(settings.clientId).rankedConnections(server)
+                        .firstOrNull { it.uri.trimEnd('/') == settings.serverUrl }
+                    when {
+                        activeConn != null -> "Using ${activeConn.label}"
+                        settings.serverName == server.name && settings.serverUrl.isNotBlank() ->
+                            "Connected"
+                        else -> null
                     }
-                )
-            }
+                },
+                onSelect = { server ->
+                    scope.launch {
+                        busy = true
+                        status = "Connecting to ${server.name}…"
+                        val plex = api(settings.clientId)
+                        val found = plex.findReachableConnection(server, server.accessToken)
+                        val conn = found.getOrNull()
+                        if (conn != null) {
+                            val url = conn.uri.trimEnd('/')
+                            repository.update {
+                                it.copy(
+                                    serverUrl = url,
+                                    serverName = server.name,
+                                    serverAccessToken = server.accessToken,
+                                    playlistId = "",
+                                    playlistTitle = ""
+                                )
+                            }
+                            loadPlaylistsForUrl(url, server.accessToken, settings.clientId)
+                            status = "Using ${conn.label}"
+                        } else {
+                            status = found.exceptionOrNull()?.message
+                                ?: "Could not reach ${server.name}"
+                        }
+                        busy = false
+                    }
+                }
+            )
         }
 
         if (settings.isPlexSignedIn && settings.serverUrl.isNotBlank()) {
-            SectionTitle("2. Music / audiobook libraries")
-            if (libraries.isEmpty()) {
-                Text(
-                    "No music libraries found on this connection yet.",
-                    style = SettingsTextStyles.hint
-                )
+            val musicOptions = remember(playlists, libraries) {
+                buildList {
+                    playlists.forEach { add(MusicPick.Playlist(it)) }
+                    libraries.forEach { add(MusicPick.Library(it)) }
+                }
             }
-            libraries.forEach { library ->
-                SelectRow(
-                    title = library.title,
-                    subtitle = "Whole library (first 300 tracks)",
-                    selected = settings.playlistId == "section:${library.key}",
-                    onClick = {
-                        scope.launch {
-                            repository.update {
-                                it.copy(
-                                    playlistId = "section:${library.key}",
-                                    playlistTitle = library.title
-                                )
+            val selectedMusicLabel = when {
+                settings.playlistId.startsWith("section:") -> {
+                    val key = settings.playlistId.removePrefix("section:")
+                    libraries.firstOrNull { it.key == key }?.title
+                        ?: settings.playlistTitle.ifBlank { "Library" }
+                }
+                settings.playlistId.isNotBlank() -> {
+                    playlists.firstOrNull { it.id == settings.playlistId }?.title
+                        ?: settings.playlistTitle.ifBlank { "Playlist" }
+                }
+                else -> "Choose playlist or library"
+            }
+            SettingsDropdown(
+                label = "Bedtime music",
+                selectedText = selectedMusicLabel,
+                options = musicOptions,
+                optionLabel = { pick ->
+                    when (pick) {
+                        is MusicPick.Playlist -> pick.item.title
+                        is MusicPick.Library -> pick.item.title
+                    }
+                },
+                optionSupporting = { pick ->
+                    when (pick) {
+                        is MusicPick.Playlist -> "Playlist · ${pick.item.leafCount} items"
+                        is MusicPick.Library -> "Whole library · first 300 tracks"
+                    }
+                },
+                enabled = musicOptions.isNotEmpty(),
+                onSelect = { pick ->
+                    scope.launch {
+                        when (pick) {
+                            is MusicPick.Playlist -> {
+                                repository.update {
+                                    it.copy(
+                                        playlistId = pick.item.id,
+                                        playlistTitle = pick.item.title
+                                    )
+                                }
+                                status = "Playlist: ${pick.item.title}"
                             }
-                            status = "Bedtime library set: ${library.title}"
+                            is MusicPick.Library -> {
+                                repository.update {
+                                    it.copy(
+                                        playlistId = "section:${pick.item.key}",
+                                        playlistTitle = pick.item.title
+                                    )
+                                }
+                                status = "Library: ${pick.item.title}"
+                            }
                         }
                     }
-                )
-            }
-
-            SectionTitle("3. Playlists")
-            OutlinedButton(
+                }
+            )
+            TextButton(
                 onClick = {
                     scope.launch {
                         busy = true
-                        status = "Refreshing playlists…"
+                        status = "Refreshing…"
                         loadPlaylistsForUrl(
                             settings.serverUrl,
                             settings.pmsToken,
                             settings.clientId
                         )
-                        status = if (playlists.isEmpty()) {
-                            "No playlists found"
+                        status = if (playlists.isEmpty() && libraries.isEmpty()) {
+                            "Nothing found — check Plex playlists"
                         } else {
-                            "Loaded ${playlists.size} playlists"
+                            "Updated"
                         }
                         busy = false
                     }
                 }
-            ) { Text("Refresh playlists") }
-
-            if (playlists.isEmpty()) {
-                Text(
-                    "Looking for “Ava bedtime”. Tap your server above if this is empty.",
-                    style = SettingsTextStyles.hint
-                )
+            ) {
+                Text("Refresh music list")
             }
-            playlists.forEach { playlist ->
-                val isAva = playlist.title.contains("Ava", ignoreCase = true)
-                SelectRow(
-                    title = playlist.title,
-                    subtitle = "${playlist.leafCount} items",
-                    selected = settings.playlistId == playlist.id,
-                    emphasize = isAva,
-                    onClick = {
-                        scope.launch {
-                            repository.update {
-                                it.copy(
-                                    playlistId = playlist.id,
-                                    playlistTitle = playlist.title
-                                )
-                            }
-                            status = "Bedtime playlist set: ${playlist.title}"
-                        }
-                    }
+            if (musicOptions.isEmpty()) {
+                Text(
+                    "No playlists or music libraries on this server yet.",
+                    style = SettingsTextStyles.hint
                 )
             }
         }
 
         SectionTitle("Look & theme")
-        Text(
-            "Pick a look Ava likes. Unicorn is the default.",
-            style = SettingsTextStyles.hint
-        )
-        com.avas.bedtime.ui.theme.AppThemeId.entries.forEach { theme ->
-            SelectRow(
-                title = theme.label,
-                subtitle = theme.storageKey,
-                selected = settings.themeId == theme.storageKey,
-                emphasize = theme == com.avas.bedtime.ui.theme.AppThemeId.Unicorn,
-                onClick = {
-                    scope.launch {
-                        repository.update { it.copy(themeId = theme.storageKey) }
-                        status = "Theme: ${theme.label}"
-                    }
-                }
-            )
-        }
-
-        SectionTitle("Bedtime & wake-up")
-        Text(
-            "Wake-up stops playback at a clock time (best when you start at different hours). " +
-                "Bedtime is for your reference / later scheduling.",
-            style = SettingsTextStyles.hint
-        )
-        SelectRow(
-            title = "Stop at wake-up time",
-            subtitle = "Ends at ${settings.wakeLabel}",
-            selected = settings.resolvedEndMode == com.avas.bedtime.data.EndMode.WakeUp,
-            onClick = {
+        SettingsDropdown(
+            label = "Theme",
+            selectedText = AppThemeId.fromStorage(settings.themeId).label,
+            options = AppThemeId.entries.toList(),
+            optionLabel = { it.label },
+            onSelect = { theme ->
                 scope.launch {
-                    repository.update {
-                        it.copy(endMode = com.avas.bedtime.data.EndMode.WakeUp.storageKey)
-                    }
+                    repository.update { it.copy(themeId = theme.storageKey) }
+                    status = "Theme: ${theme.label}"
                 }
             }
         )
-        SelectRow(
-            title = "Stop after a set number of hours",
-            subtitle = "${settings.timerHours} hours from Start",
-            selected = settings.resolvedEndMode == com.avas.bedtime.data.EndMode.Duration,
-            onClick = {
+
+        SectionTitle("Bedtime & wake-up")
+        SettingsDropdown(
+            label = "Stop when",
+            selectedText = when (settings.resolvedEndMode) {
+                com.avas.bedtime.data.EndMode.WakeUp -> "Wake-up time (${settings.wakeLabel})"
+                com.avas.bedtime.data.EndMode.Duration -> "After ${settings.timerHours} hours"
+            },
+            options = com.avas.bedtime.data.EndMode.entries.toList(),
+            optionLabel = { mode ->
+                when (mode) {
+                    com.avas.bedtime.data.EndMode.WakeUp -> "Wake-up time"
+                    com.avas.bedtime.data.EndMode.Duration -> "Set number of hours"
+                }
+            },
+            onSelect = { mode ->
                 scope.launch {
-                    repository.update {
-                        it.copy(endMode = com.avas.bedtime.data.EndMode.Duration.storageKey)
-                    }
+                    repository.update { it.copy(endMode = mode.storageKey) }
                 }
             }
         )
@@ -705,9 +664,7 @@ fun SettingsScreen(
 
         SectionTitle("Stir detection")
         Text(
-            "For bed movement: keep the tablet on the mattress edge or bed frame (not a solid nightstand). " +
-                "Mic listens for whining/crying and sharp sounds like a metal bottle. " +
-                "Audio is never saved.",
+            "Mic: crying / sharp sounds (never saved). Motion: bed movement — keep tablet on the mattress edge.",
             style = SettingsTextStyles.hint
         )
         ToggleRow("Listen with microphone", settings.micEnabled) { enabled ->
@@ -715,12 +672,19 @@ fun SettingsScreen(
         }
         if (settings.micEnabled) {
             Text("Mic sensitivity ${(settings.micSensitivity * 100).toInt()}%")
+            Text(
+                "Lower = only louder cries / sharp noises. 10% ignores most music and little sounds.",
+                style = SettingsTextStyles.hint
+            )
             Slider(
                 value = settings.micSensitivity,
                 onValueChange = { value ->
-                    scope.launch { repository.update { it.copy(micSensitivity = value) } }
+                    val rounded = (value * 100f).roundToInt().coerceIn(10, 100) / 100f
+                    if (kotlin.math.abs(rounded - settings.micSensitivity) < 0.001f) return@Slider
+                    scope.launch { repository.update { it.copy(micSensitivity = rounded) } }
                 },
-                valueRange = 0.1f..1f
+                valueRange = 0.1f..1f,
+                steps = 17
             )
         }
         ToggleRow("Feel motion", settings.motionEnabled) { enabled ->
@@ -728,12 +692,19 @@ fun SettingsScreen(
         }
         if (settings.motionEnabled) {
             Text("Motion sensitivity ${(settings.motionSensitivity * 100).toInt()}%")
+            Text(
+                "Lower = only clearer bed movement. Keep the phone on the mattress edge.",
+                style = SettingsTextStyles.hint
+            )
             Slider(
                 value = settings.motionSensitivity,
                 onValueChange = { value ->
-                    scope.launch { repository.update { it.copy(motionSensitivity = value) } }
+                    val rounded = (value * 100f).roundToInt().coerceIn(10, 100) / 100f
+                    if (kotlin.math.abs(rounded - settings.motionSensitivity) < 0.001f) return@Slider
+                    scope.launch { repository.update { it.copy(motionSensitivity = rounded) } }
                 },
-                valueRange = 0.1f..1f
+                valueRange = 0.1f..1f,
+                steps = 17
             )
         }
         Text(
@@ -747,9 +718,11 @@ fun SettingsScreen(
         Slider(
             value = settings.cooldownSeconds.toFloat(),
             onValueChange = { seconds ->
+                val rounded = seconds.roundToInt().coerceIn(10, 120)
+                if (rounded == settings.cooldownSeconds) return@Slider
                 scope.launch {
                     repository.update {
-                        it.copy(cooldownSeconds = seconds.toInt().coerceIn(10, 120))
+                        it.copy(cooldownSeconds = rounded)
                     }
                 }
             },
@@ -757,17 +730,27 @@ fun SettingsScreen(
             steps = 21
         )
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
         }
 
-        Button(
-            onClick = onBack,
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("Done")
+            Button(
+                onClick = onBack,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Done")
+            }
+            Text(
+                "App version $appVersionLabel",
+                style = SettingsTextStyles.hint,
+                modifier = Modifier.padding(top = 8.dp)
+            )
         }
     }
 
@@ -827,7 +810,7 @@ private fun SectionTitle(text: String) {
     Text(
         text,
         style = SettingsTextStyles.section,
-        modifier = Modifier.padding(top = 6.dp)
+        modifier = Modifier.padding(top = 4.dp)
     )
 }
 
@@ -843,29 +826,92 @@ private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
     }
 }
 
+private sealed class MusicPick {
+    data class Playlist(val item: PlexApi.PlaylistSummary) : MusicPick()
+    data class Library(val item: PlexApi.LibrarySection) : MusicPick()
+}
+
 @Composable
-private fun SelectRow(
-    title: String,
-    subtitle: String,
-    selected: Boolean,
-    emphasize: Boolean = false,
-    onClick: () -> Unit
+private fun settingsFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = Color(0xFFF2E8D5),
+    unfocusedTextColor = Color(0xFFF2E8D5),
+    disabledTextColor = Color(0xFF9AA8BC),
+    focusedBorderColor = Color(0xFFC4A574),
+    unfocusedBorderColor = Color(0xFF6B7A8F),
+    disabledBorderColor = Color(0xFF3A4555),
+    cursorColor = Color(0xFFC4A574),
+    focusedContainerColor = Color(0xFF243044),
+    unfocusedContainerColor = Color(0xFF243044),
+    disabledContainerColor = Color(0xFF1A2433),
+    focusedLabelColor = Color(0xFFC4A574),
+    unfocusedLabelColor = Color(0xFFD5CBB8),
+    disabledLabelColor = Color(0xFF6B7A8F),
+    focusedTrailingIconColor = Color(0xFFC4A574),
+    unfocusedTrailingIconColor = Color(0xFFD5CBB8)
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun <T> SettingsDropdown(
+    label: String,
+    selectedText: String,
+    options: List<T>,
+    optionLabel: (T) -> String,
+    optionSupporting: ((T) -> String?)? = null,
+    enabled: Boolean = true,
+    onSelect: (T) -> Unit
 ) {
-    val bg = when {
-        selected -> Color(0xFF3D7A7A)
-        emphasize -> Color(0xFF3A4A2E)
-        else -> Color(0xFF243044)
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(bg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { if (enabled) expanded = it }
     ) {
-        Text(title, style = SettingsTextStyles.body)
-        if (subtitle.isNotBlank()) {
-            Text(subtitle, style = SettingsTextStyles.hint)
+        OutlinedTextField(
+            value = selectedText,
+            onValueChange = {},
+            readOnly = true,
+            enabled = enabled,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(type = MenuAnchorType.PrimaryNotEditable, enabled = enabled),
+            singleLine = true,
+            colors = settingsFieldColors()
+        )
+        ExposedDropdownMenu(
+            expanded = expanded && enabled,
+            onDismissRequest = { expanded = false },
+            containerColor = Color(0xFF243044)
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                optionLabel(option),
+                                color = Color(0xFFF2E8D5),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val supporting = optionSupporting?.invoke(option)
+                            if (!supporting.isNullOrBlank()) {
+                                Text(
+                                    supporting,
+                                    color = Color(0xFFD5CBB8),
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(option)
+                    }
+                )
+            }
         }
     }
 }

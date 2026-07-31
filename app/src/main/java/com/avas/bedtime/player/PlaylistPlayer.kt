@@ -21,6 +21,9 @@ class PlaylistPlayer(
     private var tracks: List<PlexApi.Track> = emptyList()
     private var timeline: PlexTimelineReporter? = null
 
+    /** Fired when ExoPlayer advances/seeks to another playlist item. */
+    var onTrackChanged: (() -> Unit)? = null
+
     val isPlaying: Boolean
         get() = player.isPlaying
 
@@ -57,6 +60,10 @@ class PlaylistPlayer(
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 bindCurrentTrackToTimeline()
                 timeline?.onSeekOrTrackChange()
+                // AUTO / SEEK / PLAYLIST_CHANGED — all can jump loudness; mute stir briefly.
+                if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
+                    onTrackChanged?.invoke()
+                }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {

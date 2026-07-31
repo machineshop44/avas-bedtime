@@ -7,8 +7,7 @@ alwaysApply: true
 
 Whenever you build or ship an Ava Bedtime app update (after `assembleDebug` / `assembleRelease`, or when telling Andrew an update is ready):
 
-1. Copy the built APK into **`G:\My Drive\apks`**.
-2. Prefer running from the project root:
+1. Copy the built APK into **`G:\My Drive\apks`** using:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File ".\publish-apk-to-drive.ps1"
@@ -16,9 +15,10 @@ powershell -ExecutionPolicy Bypass -File ".\publish-apk-to-drive.ps1"
 
    Or with a fresh build: `.\publish-apk-to-drive.ps1 -Build`
 
-3. That script writes:
+2. Keep **only one** Ava APK there, named by version:
    - `AvaBedtime-<versionName>(<versionCode>).apk`
-   - `AvaBedtime-latest.apk` (same file, easy to find)
+   - Do **not** create `-latest` aliases. The publish script removes older Ava APKs automatically.
 
-4. Do this even if GitHub sync is separate — Drive `apks` is the handoff folder for phones.
-5. If `G:\My Drive` is missing, say so; do not silently skip.
+3. The Drive `apks` folder should stay lean: one versioned file per app (Ava + Arrs Hub Mobile).
+
+4. If `G:\My Drive` is missing, say so; do not silently skip.

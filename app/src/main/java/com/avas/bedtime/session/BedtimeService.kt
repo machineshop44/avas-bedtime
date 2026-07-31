@@ -67,6 +67,9 @@ class BedtimeService : Service() {
     override fun onCreate() {
         super.onCreate()
         player = PlaylistPlayer(this, scope)
+        player.onTrackChanged = {
+            stirDetector?.ignoreAudioChange()
+        }
         instance = this
         _state.value = BedtimeSessionState()
     }
@@ -193,15 +196,22 @@ class BedtimeService : Service() {
 
         timerJob?.cancel()
         timerJob = scope.launch {
+            var startingOverUntil = 0L
             while (isActive) {
                 noteProgress(player.currentProgress())
                 val remaining = max(0L, endsAtElapsed - SystemClock.elapsedRealtime())
                 val previous = _state.value
-                // Keep "Starting over" visible briefly; never rewrite the end time.
+                val now = SystemClock.elapsedRealtime()
+                if (previous.statusMessage == "Starting over" && startingOverUntil == 0L) {
+                    startingOverUntil = now + 4_000L
+                }
                 val status = when {
                     remaining == 0L -> "Good morning"
-                    previous.statusMessage == "Starting over" -> previous.statusMessage
-                    else -> "Playing"
+                    now < startingOverUntil -> "Starting over"
+                    else -> {
+                        startingOverUntil = 0L
+                        "Playing"
+                    }
                 }
                 _state.value = previous.copy(
                     active = true,
@@ -247,6 +257,9 @@ class BedtimeService : Service() {
             StirSource.Motion.name -> motionRestarts++
             else -> manualRestarts++
         }
+        // Mute detection for the restart seek; never shorter than remaining cooldown.
+        val muteMs = max(14_000L, stirDetector?.remainingCooldownMs() ?: 0L)
+        stirDetector?.ignoreAudioChange(muteMs)
         player.restartFromBeginning()
         stretchStartedElapsed = SystemClock.elapsedRealtime()
         _state.value = _state.value.copy(
@@ -256,7 +269,8 @@ class BedtimeService : Service() {
         )
         Log.i(
             TAG,
-            "Playlist restarted; timer unchanged (${formatRemaining(max(0L, timerEnd - SystemClock.elapsedRealtime()))} left)"
+            "Playlist restarted (mute ${muteMs}ms); timer unchanged " +
+                "(${formatRemaining(max(0L, timerEnd - SystemClock.elapsedRealtime()))} left)"
         )
     }
 
@@ -402,6 +416,18 @@ class BedtimeService : Service() {
 
         @Volatile
         var latestSettings: BedtimeSettings = BedtimeSettings()
+
+        /** Push sensitivity / mic-motion toggles into the live detector. */
+        fun applyStirSettings(settings: BedtimeSettings) {
+            latestSettings = settings
+            instance?.stirDetector?.updateConfig(
+                micSensitivity = settings.micSensitivity,
+                motionSensitivity = settings.motionSensitivity,
+                micEnabled = settings.micEnabled,
+                motionEnabled = settings.motionEnabled,
+                cooldownSeconds = settings.cooldownSeconds
+            )
+        }
 
         fun formatRemaining(ms: Long): String {
             val totalSec = ms / 1000

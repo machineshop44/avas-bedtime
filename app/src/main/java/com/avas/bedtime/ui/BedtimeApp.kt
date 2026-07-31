@@ -30,7 +30,7 @@ fun BedtimeApp() {
     var screen by remember { mutableStateOf(Screen.Kid) }
 
     LaunchedEffect(settings) {
-        BedtimeService.latestSettings = settings
+        BedtimeService.applyStirSettings(settings)
         if (settings.clientId.isBlank()) {
             app.settingsRepository.ensureClientId()
         }

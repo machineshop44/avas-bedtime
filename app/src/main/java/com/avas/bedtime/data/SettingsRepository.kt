@@ -29,8 +29,8 @@ data class BedtimeSettings(
     val bedtimeMinute: Int = 0,
     val wakeHour: Int = 7,
     val wakeMinute: Int = 0,
-    val micSensitivity: Float = 0.8f,
-    val motionSensitivity: Float = 0.85f,
+    val micSensitivity: Float = 0.45f,
+    val motionSensitivity: Float = 0.45f,
     val micEnabled: Boolean = true,
     val motionEnabled: Boolean = true,
     val cooldownSeconds: Int = 25,
@@ -82,6 +82,7 @@ class SettingsRepository(private val context: Context) {
         val avaPhotoPath = stringPreferencesKey("ava_photo_path")
         val childName = stringPreferencesKey("child_name")
         val discordWebhookUrl = stringPreferencesKey("discord_webhook_url")
+        val detectionMigrated = booleanPreferencesKey("detection_defaults_migrated_v1")
     }
 
     val settings: Flow<BedtimeSettings> = context.dataStore.data.map { prefs ->
@@ -101,8 +102,8 @@ class SettingsRepository(private val context: Context) {
             bedtimeMinute = prefs[Keys.bedtimeMinute] ?: 0,
             wakeHour = prefs[Keys.wakeHour] ?: 7,
             wakeMinute = prefs[Keys.wakeMinute] ?: 0,
-            micSensitivity = prefs[Keys.micSensitivity] ?: 0.8f,
-            motionSensitivity = prefs[Keys.motionSensitivity] ?: 0.85f,
+            micSensitivity = prefs[Keys.micSensitivity] ?: 0.45f,
+            motionSensitivity = prefs[Keys.motionSensitivity] ?: 0.45f,
             micEnabled = prefs[Keys.micEnabled] ?: true,
             motionEnabled = prefs[Keys.motionEnabled] ?: true,
             cooldownSeconds = prefs[Keys.cooldownSeconds] ?: 25,
@@ -124,18 +125,18 @@ class SettingsRepository(private val context: Context) {
         return id
     }
 
-    /** Older builds used very insensitive defaults / long cooldown; nudge once. */
+    /**
+     * Older builds used a very long cooldown (~75s). Nudge that once, then never
+     * override the parent's sensitivity sliders again.
+     */
     suspend fun migrateDetectionDefaultsIfNeeded() {
-        update { current ->
-            val needsBump = current.cooldownSeconds >= 60 ||
-                current.micSensitivity <= 0.5f ||
-                current.motionSensitivity <= 0.5f
-            if (!needsBump) current
-            else current.copy(
-                micSensitivity = maxOf(current.micSensitivity, 0.8f),
-                motionSensitivity = maxOf(current.motionSensitivity, 0.85f),
-                cooldownSeconds = if (current.cooldownSeconds >= 60) 25 else current.cooldownSeconds
-            )
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.detectionMigrated] == true) return@edit
+            val cooldown = prefs[Keys.cooldownSeconds]
+            if (cooldown != null && cooldown >= 60) {
+                prefs[Keys.cooldownSeconds] = 25
+            }
+            prefs[Keys.detectionMigrated] = true
         }
     }
 
@@ -157,8 +158,8 @@ class SettingsRepository(private val context: Context) {
                 bedtimeMinute = prefs[Keys.bedtimeMinute] ?: 0,
                 wakeHour = prefs[Keys.wakeHour] ?: 7,
                 wakeMinute = prefs[Keys.wakeMinute] ?: 0,
-                micSensitivity = prefs[Keys.micSensitivity] ?: 0.8f,
-                motionSensitivity = prefs[Keys.motionSensitivity] ?: 0.85f,
+                micSensitivity = prefs[Keys.micSensitivity] ?: 0.45f,
+                motionSensitivity = prefs[Keys.motionSensitivity] ?: 0.45f,
                 micEnabled = prefs[Keys.micEnabled] ?: true,
                 motionEnabled = prefs[Keys.motionEnabled] ?: true,
                 cooldownSeconds = prefs[Keys.cooldownSeconds] ?: 25,

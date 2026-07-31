@@ -33,8 +33,14 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -45,7 +51,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
@@ -56,6 +62,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -85,38 +93,46 @@ private data class HomeMetrics(
     val topPad: Dp,
     val gapAfterPhoto: Dp,
     val gapBeforeButton: Dp,
-    val contentTopBias: Dp
+    val contentTopBias: Dp,
+    val stopVerticalPad: Dp
 )
 
 @Composable
-private fun rememberHomeMetrics(maxHeight: Dp, maxWidth: Dp): HomeMetrics {
+private fun rememberHomeMetrics(
+    maxHeight: Dp,
+    maxWidth: Dp,
+    sessionActive: Boolean
+): HomeMetrics {
     val tabletish = maxWidth >= 600.dp || maxHeight >= 900.dp
+    // Active session stacks RESTART + STOP; phones need a tighter layout.
     return when {
-        maxHeight < 640.dp -> HomeMetrics(
-            photoSize = 88.dp,
-            buttonSize = 150.dp,
-            nameSp = 34f,
-            themeSp = 18f,
+        maxHeight < 700.dp || (maxWidth < 500.dp && !tabletish) -> HomeMetrics(
+            photoSize = if (sessionActive) 68.dp else 84.dp,
+            buttonSize = if (sessionActive) 124.dp else 140.dp,
+            nameSp = if (sessionActive) 30f else 34f,
+            themeSp = 16f,
+            statusSp = 16f,
+            timerSp = if (sessionActive) 26f else 28f,
+            buttonLabelSp = if (sessionActive) 24f else 30f,
+            topPad = 4.dp,
+            gapAfterPhoto = 4.dp,
+            gapBeforeButton = 8.dp,
+            contentTopBias = 0.dp,
+            stopVerticalPad = 14.dp
+        )
+        maxHeight < 800.dp && !tabletish -> HomeMetrics(
+            photoSize = if (sessionActive) 96.dp else 116.dp,
+            buttonSize = if (sessionActive) 156.dp else 176.dp,
+            nameSp = 36f,
+            themeSp = 20f,
             statusSp = 18f,
-            timerSp = 28f,
-            buttonLabelSp = 34f,
-            topPad = 12.dp,
+            timerSp = 30f,
+            buttonLabelSp = if (sessionActive) 28f else 34f,
+            topPad = 8.dp,
             gapAfterPhoto = 6.dp,
             gapBeforeButton = 10.dp,
-            contentTopBias = 44.dp
-        )
-        maxHeight < 740.dp -> HomeMetrics(
-            photoSize = 120.dp,
-            buttonSize = 180.dp,
-            nameSp = 40f,
-            themeSp = 22f,
-            statusSp = 20f,
-            timerSp = 32f,
-            buttonLabelSp = 38f,
-            topPad = 20.dp,
-            gapAfterPhoto = 10.dp,
-            gapBeforeButton = 12.dp,
-            contentTopBias = 56.dp
+            contentTopBias = 0.dp,
+            stopVerticalPad = 14.dp
         )
         tabletish -> HomeMetrics(
             photoSize = 168.dp,
@@ -126,23 +142,25 @@ private fun rememberHomeMetrics(maxHeight: Dp, maxWidth: Dp): HomeMetrics {
             statusSp = 24f,
             timerSp = 36f,
             buttonLabelSp = 44f,
-            topPad = 56.dp,
+            topPad = 40.dp,
             gapAfterPhoto = 16.dp,
             gapBeforeButton = 16.dp,
-            contentTopBias = 96.dp
+            contentTopBias = 72.dp,
+            stopVerticalPad = 14.dp
         )
         else -> HomeMetrics(
-            photoSize = 156.dp,
-            buttonSize = 210.dp,
-            nameSp = 46f,
-            themeSp = 24f,
-            statusSp = 22f,
-            timerSp = 34f,
-            buttonLabelSp = 42f,
-            topPad = 28.dp,
-            gapAfterPhoto = 12.dp,
-            gapBeforeButton = 14.dp,
-            contentTopBias = 64.dp
+            photoSize = 148.dp,
+            buttonSize = if (sessionActive) 184.dp else 200.dp,
+            nameSp = 44f,
+            themeSp = 22f,
+            statusSp = 20f,
+            timerSp = 32f,
+            buttonLabelSp = if (sessionActive) 34f else 40f,
+            topPad = 16.dp,
+            gapAfterPhoto = 10.dp,
+            gapBeforeButton = 12.dp,
+            contentTopBias = if (sessionActive) 12.dp else 36.dp,
+            stopVerticalPad = 14.dp
         )
     }
 }
@@ -193,7 +211,7 @@ fun KidHomeScreen(
 
     val ready = settings.hasBedtimePlaylist
     val pulse by animateFloatAsState(
-        targetValue = if (session.active) 1.05f else 1f,
+        targetValue = if (session.active) 1.03f else 1f,
         animationSpec = tween(900),
         label = "pulse"
     )
@@ -212,102 +230,137 @@ fun KidHomeScreen(
     ) {
         SoftAtmosphere(colors = colors)
         ThemePasserby(colors = colors)
-        val metrics = rememberHomeMetrics(maxHeight, maxWidth)
+        val metrics = rememberHomeMetrics(maxHeight, maxWidth, sessionActive = session.active)
 
-        Column(modifier = Modifier.fillMaxSize()) {
-            Column(
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .navigationBarsPadding()
+        ) {
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = metrics.topPad, start = 20.dp, end = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(top = metrics.topPad, start = 16.dp, end = 8.dp)
             ) {
-                if (settings.hasAvaPhoto) {
-                    val bitmap = remember(settings.avaPhotoPath) {
-                        runCatching {
-                            android.graphics.BitmapFactory.decodeFile(settings.avaPhotoPath)
-                                ?.asImageBitmap()
-                        }.getOrNull()
-                    }
-                    if (bitmap != null) {
-                        Box(contentAlignment = Alignment.Center) {
-                            // Soft bloom behind the photo
-                            Box(
-                                modifier = Modifier
-                                    .size(metrics.photoSize + 36.dp)
-                                    .background(
-                                        Brush.radialGradient(
-                                            listOf(
-                                                colors.subtitle.copy(alpha = 0.28f),
-                                                Color.Transparent
-                                            )
-                                        ),
-                                        shape = CircleShape
-                                    )
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .shadow(
-                                        elevation = 28.dp,
-                                        shape = CircleShape,
-                                        ambientColor = colors.shadowTint,
-                                        spotColor = colors.shadowTint,
-                                        clip = false
-                                    )
-                                    .size(metrics.photoSize + 12.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.photoRing)
-                                    .padding(5.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Image(
-                                    bitmap = bitmap,
-                                    contentDescription = settings.displayName,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .clip(CircleShape)
-                                )
-                            }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (settings.hasAvaPhoto) {
+                        val bitmap = remember(settings.avaPhotoPath) {
+                            runCatching {
+                                android.graphics.BitmapFactory.decodeFile(settings.avaPhotoPath)
+                                    ?.asImageBitmap()
+                            }.getOrNull()
                         }
-                        Spacer(Modifier.height(metrics.gapAfterPhoto))
+                        if (bitmap != null) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(metrics.photoSize + if (session.active) 20.dp else 36.dp)
+                                        .background(
+                                            Brush.radialGradient(
+                                                listOf(
+                                                    colors.subtitle.copy(alpha = 0.28f),
+                                                    Color.Transparent
+                                                )
+                                            ),
+                                            shape = CircleShape
+                                        )
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .shadow(
+                                            elevation = 28.dp,
+                                            shape = CircleShape,
+                                            ambientColor = colors.shadowTint,
+                                            spotColor = colors.shadowTint,
+                                            clip = false
+                                        )
+                                        .size(metrics.photoSize + 12.dp)
+                                        .clip(CircleShape)
+                                        .background(colors.photoRing)
+                                        .padding(5.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Image(
+                                        bitmap = bitmap,
+                                        contentDescription = settings.displayName,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(CircleShape)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(metrics.gapAfterPhoto))
+                        }
                     }
+                    Text(
+                        text = settings.possessiveName,
+                        style = MaterialTheme.typography.headlineLarge.copy(
+                            fontSize = metrics.nameSp.sp,
+                            letterSpacing = 0.5.sp
+                        ),
+                        color = colors.title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = when (colors.id) {
+                            AppThemeId.Unicorn -> "Unicorn Bedtime"
+                            AppThemeId.Rainbow -> "Rainbow Bedtime"
+                            AppThemeId.Ocean -> "Ocean Bedtime"
+                            AppThemeId.Forest -> "Forest Bedtime"
+                            AppThemeId.Galaxy -> "Galaxy Bedtime"
+                            AppThemeId.Night -> "Night Bedtime"
+                        },
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontSize = metrics.themeSp.sp,
+                            letterSpacing = 0.3.sp
+                        ),
+                        color = colors.subtitle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
-                Text(
-                    text = settings.possessiveName,
-                    style = MaterialTheme.typography.headlineLarge.copy(
-                        fontSize = metrics.nameSp.sp,
-                        letterSpacing = 0.5.sp
-                    ),
-                    color = colors.title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = when (colors.id) {
-                        AppThemeId.Unicorn -> "Unicorn Bedtime"
-                        AppThemeId.Rainbow -> "Rainbow Bedtime"
-                        AppThemeId.Ocean -> "Ocean Bedtime"
-                        AppThemeId.Forest -> "Forest Bedtime"
-                        AppThemeId.Galaxy -> "Galaxy Bedtime"
-                        AppThemeId.Night -> "Night Bedtime"
-                    },
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontSize = metrics.themeSp.sp,
-                        letterSpacing = 0.3.sp
-                    ),
-                    color = colors.subtitle,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+
+                IconButton(
+                    onClick = onOpenSettings,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .semantics { contentDescription = "Settings" }
+                        .shadow(
+                            elevation = 8.dp,
+                            shape = CircleShape,
+                            ambientColor = colors.shadowTint,
+                            spotColor = colors.shadowTint,
+                            clip = false
+                        )
+                        .clip(CircleShape)
+                        .background(colors.settingsBar)
+                        .size(44.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = null,
+                        tint = colors.settingsText,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
 
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    .clipToBounds()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
-                    .padding(top = metrics.contentTopBias),
+                    .padding(top = metrics.contentTopBias, bottom = 20.dp),
                 verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -316,7 +369,7 @@ fun KidHomeScreen(
                         session.active && session.statusMessage == "Starting over" ->
                             "Heard a stir — starting over"
                         session.active -> "Sleepy music is on"
-                        !ready -> "Grown-ups: pick music in Settings"
+                        !ready -> "Grown-ups: tap the gear to pick music"
                         else -> settings.playlistTitle.ifBlank { "Ready for bed" }
                     },
                     style = MaterialTheme.typography.titleLarge.copy(
@@ -369,7 +422,7 @@ fun KidHomeScreen(
                             context.startService(intent)
                         }
                     )
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(14.dp))
                     Box(
                         modifier = Modifier
                             .shadow(
@@ -386,13 +439,14 @@ fun KidHomeScreen(
                                     .setAction(BedtimeService.ACTION_STOP)
                                 context.startService(intent)
                             }
-                            .padding(horizontal = 28.dp, vertical = 12.dp),
+                            .padding(horizontal = 28.dp, vertical = metrics.stopVerticalPad),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = "STOP",
                             style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
-                            color = colors.buttonText
+                            color = colors.buttonText,
+                            maxLines = 1
                         )
                     }
                 } else {
@@ -417,30 +471,6 @@ fun KidHomeScreen(
                         }
                     )
                 }
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(
-                        elevation = 22.dp,
-                        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-                        ambientColor = colors.shadowTint,
-                        spotColor = colors.shadowTint,
-                        clip = false
-                    )
-                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-                    .background(colors.settingsBar)
-                    .clickable(onClick = onOpenSettings)
-                    .navigationBarsPadding()
-                    .padding(vertical = 16.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "Settings",
-                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
-                    color = colors.settingsText
-                )
             }
         }
     }
@@ -589,9 +619,12 @@ private fun BigRoundButton(
             text = label,
             style = MaterialTheme.typography.headlineLarge.copy(
                 fontSize = labelSp.sp,
-                letterSpacing = 1.2.sp
+                letterSpacing = 0.8.sp
             ),
-            color = textColor
+            color = textColor,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }

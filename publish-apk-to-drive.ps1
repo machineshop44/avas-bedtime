@@ -1,5 +1,5 @@
 # Copy the latest Ava Bedtime APK into Google Drive\apks.
-# Named with version so phones can grab a clear file from Drive.
+# Keeps only the current versioned file for this app (no -latest aliases).
 #
 # Usage:
 #   .\publish-apk-to-drive.ps1
@@ -15,6 +15,7 @@ Set-Location $PSScriptRoot
 $DriveApks = "G:\My Drive\apks"
 $ApkSource = Join-Path $PSScriptRoot "app\build\outputs\apk\debug\app-debug.apk"
 $GradleFile = Join-Path $PSScriptRoot "app\build.gradle.kts"
+$Prefix = "AvaBedtime-"
 
 if (-not (Test-Path "G:\My Drive")) {
     throw "Google Drive not available at G:\My Drive"
@@ -41,13 +42,13 @@ if ($gradleText -notmatch 'versionName\s*=\s*"([^"]+)"') {
 $versionName = $Matches[1]
 $code = if ($gradleText -match 'versionCode\s*=\s*(\d+)') { $Matches[1] } else { "0" }
 
-$destName = "AvaBedtime-$versionName($code).apk"
+$destName = "$Prefix$versionName($code).apk"
 $destPath = Join-Path $DriveApks $destName
-$latestPath = Join-Path $DriveApks "AvaBedtime-latest.apk"
+
+Get-ChildItem -LiteralPath $DriveApks -Filter "$Prefix*.apk" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -ne $destName } |
+    Remove-Item -Force
 
 Copy-Item -LiteralPath $ApkSource -Destination $destPath -Force
-Copy-Item -LiteralPath $ApkSource -Destination $latestPath -Force
 
-Write-Host "Copied APK to Drive:"
-Write-Host "  $destPath"
-Write-Host "  $latestPath"
+Write-Host "Drive apks (Ava): $destPath"
