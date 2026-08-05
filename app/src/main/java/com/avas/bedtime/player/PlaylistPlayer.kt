@@ -1,21 +1,39 @@
 package com.avas.bedtime.player
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.util.Log
+import androidx.core.content.ContextCompat
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import com.avas.bedtime.R
 import com.avas.bedtime.plex.PlexApi
 import com.avas.bedtime.plex.PlexTimelineReporter
+import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.CoroutineScope
 
 class PlaylistPlayer(
     context: Context,
     private val scope: CoroutineScope
 ) {
-    private val player = ExoPlayer.Builder(context.applicationContext).build().apply {
+    private val appContext = context.applicationContext
+    private val artworkPng: ByteArray by lazy { loadArtworkPng(appContext) }
+
+    private val player = ExoPlayer.Builder(appContext).build().apply {
         repeatMode = Player.REPEAT_MODE_ALL
+        // Keep music stream + audio focus so volume keys / focus ducking behave normally.
+        setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .build(),
+            /* handleAudioFocus = */ true
+        )
     }
 
     private var tracks: List<PlexApi.Track> = emptyList()
@@ -93,12 +111,7 @@ class PlaylistPlayer(
             MediaItem.Builder()
                 .setUri(api.streamUrl(serverUrl, token, track.partKey))
                 .setMediaId(track.ratingKey)
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(track.title)
-                        .setArtist(track.artist)
-                        .build()
-                )
+                .setMediaMetadata(bedtimeMetadata(track.title, track.artist))
                 .build()
         }
         player.repeatMode = Player.REPEAT_MODE_ALL
@@ -114,9 +127,10 @@ class PlaylistPlayer(
         timeline?.onStopped()
         timeline = null
         tracks = emptyList()
-        val item = MediaItem.fromUri(
-            "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
-        )
+        val item = MediaItem.Builder()
+            .setUri("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3")
+            .setMediaMetadata(bedtimeMetadata("Bedtime music", "Ava Bedtime"))
+            .build()
         player.setMediaItem(item)
         player.repeatMode = Player.REPEAT_MODE_ONE
         player.prepare()
@@ -141,11 +155,23 @@ class PlaylistPlayer(
         Log.i(TAG, "Playlist restarted from beginning")
     }
 
+    fun currentPositionMs(): Long = player.currentPosition.coerceAtLeast(0L)
+
+    fun currentDurationMs(): Long = player.duration.coerceAtLeast(0L)
+
     fun release() {
         timeline?.onStopped()
         timeline = null
         player.release()
     }
+
+    private fun bedtimeMetadata(title: String, artist: String?): MediaMetadata =
+        MediaMetadata.Builder()
+            .setTitle(title)
+            .setArtist(artist?.ifBlank { null } ?: "Ava Bedtime")
+            .setAlbumTitle("Bedtime")
+            .setArtworkData(artworkPng, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+            .build()
 
     private fun bindCurrentTrackToTimeline() {
         val reporter = timeline ?: return
@@ -165,6 +191,24 @@ class PlaylistPlayer(
 
     companion object {
         private const val TAG = "PlaylistPlayer"
+
+        private fun loadArtworkPng(context: Context): ByteArray {
+            val size = (128 * context.resources.displayMetrics.density).toInt().coerceAtLeast(128)
+            val drawable = ContextCompat.getDrawable(context, R.mipmap.ic_launcher)
+                ?: ContextCompat.getDrawable(context, R.drawable.ic_notification)
+            val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            if (drawable != null) {
+                drawable.setBounds(0, 0, size, size)
+                drawable.draw(canvas)
+            } else {
+                canvas.drawColor(0xFF2E1F4A.toInt())
+            }
+            return ByteArrayOutputStream().use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                out.toByteArray()
+            }
+        }
     }
 }
 

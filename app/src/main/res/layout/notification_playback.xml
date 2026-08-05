@@ -12,7 +12,7 @@
         android:id="@+id/notif_title"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textColor="#FF2E1F4A"
+        android:textAppearance="@style/TextAppearance.Compat.Notification.Title"
         android:textSize="16sp"
         android:textStyle="bold"
         android:maxLines="1"
@@ -23,7 +23,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
-        android:textColor="#FF6B5A8A"
+        android:textAppearance="@style/TextAppearance.Compat.Notification.Info"
         android:textSize="13sp"
         android:maxLines="2"
         android:ellipsize="end" />

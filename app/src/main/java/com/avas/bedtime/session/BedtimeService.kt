@@ -445,25 +445,33 @@ class BedtimeService : Service() {
             Intent(this, BedtimeService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val views = android.widget.RemoteViews(packageName, R.layout.notification_playback).apply {
+        fun playbackViews() = android.widget.RemoteViews(packageName, R.layout.notification_playback).apply {
             setTextViewText(R.id.notif_title, getString(R.string.notification_title))
             setTextViewText(R.id.notif_text, content)
             setOnClickPendingIntent(R.id.notif_btn_restart, restart)
             setOnClickPendingIntent(R.id.notif_btn_stop, stop)
         }
+        // Lock screen: title-only public version (no buttons — kids shouldn't see transport).
+        // Unlocked shade: big custom Restart / Stop.
+        val lockSafe = NotificationCompat.Builder(this, AvaBedtimeApp.NOTIFICATION_CHANNEL_ID)
+            .setContentTitle(getString(R.string.notification_title))
+            .setContentText(content)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .build()
         return NotificationCompat.Builder(this, AvaBedtimeApp.NOTIFICATION_CHANNEL_ID)
             .setContentTitle(getString(R.string.notification_title))
             .setContentText(content)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(open)
-            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(lockSafe)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
-            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
-            .setCustomContentView(views)
-            .setCustomBigContentView(views)
-            .setCustomHeadsUpContentView(views)
+            .setShowWhen(false)
+            .setCustomContentView(playbackViews())
+            .setCustomBigContentView(playbackViews())
             .build()
     }
 

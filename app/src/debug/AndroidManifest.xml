@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name=".debug.StressReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.avas.bedtime.DEBUG_START" />
+                <action android:name="com.avas.bedtime.DEBUG_STOP" />
+                <action android:name="com.avas.bedtime.DEBUG_RESTART" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
