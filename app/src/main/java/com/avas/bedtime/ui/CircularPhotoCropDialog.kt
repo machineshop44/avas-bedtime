@@ -78,7 +78,7 @@ fun CircularPhotoCropOverlay(
             .navigationBarsPadding()
     ) {
         Text(
-            "Pinch to zoom, drag to frame, or rotate if it looks sideways",
+            "Drag to frame Ava's face. Pinch to zoom. Use Rotate if it's still sideways.",
             color = Color(0xFFF2E8D5),
             fontSize = 15.sp,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)

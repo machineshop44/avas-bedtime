@@ -12,8 +12,8 @@ android {
         applicationId = "com.avas.bedtime"
         minSdk = 28
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.3.6"
+        versionCode = 42
+        versionName = "0.6.0"
     }
 
     buildTypes {
@@ -62,6 +62,7 @@ dependencies {
 
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-session:1.4.1")
+    implementation("androidx.media:media:1.7.0")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

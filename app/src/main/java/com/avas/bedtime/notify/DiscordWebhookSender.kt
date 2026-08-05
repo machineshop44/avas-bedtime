@@ -1,14 +1,10 @@
 package com.avas.bedtime.notify
 
 import android.util.Log
-import okhttp3.Call
-import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
-import java.io.IOException
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 
@@ -28,13 +24,24 @@ object DiscordWebhookSender {
     }
 
     /**
-     * Fire-and-forget POST so bedtime stop is not blocked / cancelled with the service scope.
+     * Fire-and-forget POST (UI / tests). Prefer [sendNightSummarySync] from the service
+     * so the process is not killed before the request finishes.
      */
     fun sendNightSummaryAsync(webhookUrl: String, title: String, body: String) {
+        Thread {
+            sendNightSummarySync(webhookUrl, title, body)
+        }.start()
+    }
+
+    /**
+     * Blocking POST. Call from a background thread / IO dispatcher before [android.app.Service.stopSelf]
+     * so wake-timer endings still reach Discord (manual STOP used to work because the app stayed alive).
+     */
+    fun sendNightSummarySync(webhookUrl: String, title: String, body: String): Boolean {
         val url = webhookUrl.trim()
         if (!isValidWebhookUrl(url)) {
             if (url.isNotBlank()) Log.w(TAG, "Ignoring invalid Discord webhook URL")
-            return
+            return false
         }
         val payload = JSONObject()
             .put(
@@ -54,20 +61,18 @@ object DiscordWebhookSender {
             .header("User-Agent", "AvaBedtime")
             .build()
 
-        client.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                Log.e(TAG, "Discord webhook failed", e)
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    if (!it.isSuccessful) {
-                        Log.e(TAG, "Discord webhook HTTP ${it.code}: ${it.body?.string()}")
-                    } else {
-                        Log.i(TAG, "Discord night summary sent")
-                    }
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "Discord webhook HTTP ${response.code}: ${response.body?.string()}")
+                    false
+                } else {
+                    Log.i(TAG, "Discord night summary sent")
+                    true
                 }
             }
-        })
+        }.onFailure {
+            Log.e(TAG, "Discord webhook failed", it)
+        }.getOrDefault(false)
     }
 }

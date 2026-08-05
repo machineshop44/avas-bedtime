@@ -5,10 +5,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.media.app.NotificationCompat as MediaNotificationCompat
 import com.avas.bedtime.AvaBedtimeApp
 import com.avas.bedtime.MainActivity
 import com.avas.bedtime.R
@@ -50,6 +52,7 @@ class BedtimeService : Service() {
     private var stirDetector: StirDetector? = null
     private var timerJob: Job? = null
     private var loadJob: Job? = null
+    private var shutdownJob: Job? = null
     private var endsAtElapsed = 0L
 
     private var loggingSession = false
@@ -84,13 +87,15 @@ class BedtimeService : Service() {
                 }
                 startSession(latestSettings)
             }
-            ACTION_STOP -> stopSession()
+            ACTION_STOP -> stopSession(reason = "manual")
             ACTION_RESTART -> restartPlaylistOnly(sourceLabel = null)
         }
         return START_STICKY
     }
 
     private fun startSession(settings: BedtimeSettings) {
+        shutdownJob?.cancel()
+        shutdownJob = null
         endsAtElapsed = when (settings.resolvedEndMode) {
             EndMode.WakeUp -> ScheduleTime.nextOccurrenceElapsedRealtime(
                 settings.wakeHour,
@@ -230,7 +235,8 @@ class BedtimeService : Service() {
                     )
                 )
                 if (remaining == 0L) {
-                    stopSession()
+                    Log.i(TAG, "Wake/duration timer reached — ending session + night summary")
+                    stopSession(reason = "timer")
                     break
                 }
                 delay(1_000)
@@ -249,6 +255,7 @@ class BedtimeService : Service() {
      * Restarts playlist audio only. Does not touch [endsAtElapsed] or the sleep timer.
      */
     private fun restartPlaylistOnly(sourceLabel: String?) {
+        if (!_state.value.active) return
         val timerEnd = endsAtElapsed
         noteProgress(player.currentProgress())
         closeQuietStretch()
@@ -292,7 +299,14 @@ class BedtimeService : Service() {
         if (stretch > longestQuietMs) longestQuietMs = stretch
     }
 
-    private fun stopSession() {
+    /**
+     * @param reason `"timer"` (wake/duration) or `"manual"` (STOP button / notification).
+     */
+    private fun stopSession(reason: String) {
+        if (shutdownJob?.isActive == true) {
+            Log.i(TAG, "stopSession($reason) ignored — shutdown already in progress")
+            return
+        }
         loadJob?.cancel()
         loadJob = null
         timerJob?.cancel()
@@ -302,19 +316,69 @@ class BedtimeService : Service() {
         noteProgress(player.currentProgress())
         closeQuietStretch()
         player.pause()
-        finalizeNightIfNeeded()
+
+        val summary = takeNightSummaryOrNull()
         _state.value = BedtimeSessionState(
             active = false,
-            statusMessage = "Stopped"
+            statusMessage = if (reason == "timer") "Good morning" else "Stopped"
         )
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+
+        if (summary == null) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+
+        val app = applicationContext as? AvaBedtimeApp
+        app?.nightLogRepository?.add(summary)
+        postNightSummaryNotification(summary)
+        Log.i(TAG, "Night summary ($reason):\n${summary.formatNotificationBody()}")
+
+        val webhookUrl = latestSettings.discordWebhookUrl
+        val title = "${latestSettings.possessiveName} night"
+        val body = summary.formatNotificationBody()
+        val needsDiscord = DiscordWebhookSender.isValidWebhookUrl(webhookUrl)
+
+        // Hold CPU briefly so a 7am timer stop still finishes Discord before the process dies.
+        // Manual STOP used to work because the UI kept the process alive; timer stop did not.
+        val wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AvaBedtime:NightSummary")
+            .apply {
+                setReferenceCounted(false)
+                acquire(45_000L)
+            }
+
+        startForeground(
+            NOTIFICATION_ID,
+            buildPlaybackNotification(
+                if (reason == "timer") "Sending night summary…" else "Stopping…"
+            )
+        )
+
+        shutdownJob = scope.launch(Dispatchers.IO) {
+            try {
+                if (needsDiscord) {
+                    val ok = DiscordWebhookSender.sendNightSummarySync(webhookUrl, title, body)
+                    Log.i(TAG, "Discord night summary after $reason: ok=$ok")
+                } else {
+                    Log.i(TAG, "No Discord webhook configured — local summary only")
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    runCatching {
+                        if (wakeLock.isHeld) wakeLock.release()
+                    }
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
+            }
+        }
     }
 
-    private fun finalizeNightIfNeeded() {
-        if (!loggingSession) return
+    private fun takeNightSummaryOrNull(): NightSummary? {
+        if (!loggingSession) return null
         loggingSession = false
-        val summary = NightSummary(
+        return NightSummary(
             startedAtMs = sessionStartedAtMs,
             endedAtMs = System.currentTimeMillis(),
             micRestarts = micRestarts,
@@ -326,15 +390,6 @@ class BedtimeService : Service() {
             farthestPositionMs = farthestPositionMs,
             longestQuietStretchMs = longestQuietMs
         )
-        val app = applicationContext as? AvaBedtimeApp
-        app?.nightLogRepository?.add(summary)
-        postNightSummaryNotification(summary)
-        DiscordWebhookSender.sendNightSummaryAsync(
-            webhookUrl = latestSettings.discordWebhookUrl,
-            title = "${latestSettings.possessiveName} night",
-            body = summary.formatNotificationBody()
-        )
-        Log.i(TAG, "Night summary:\n${summary.formatNotificationBody()}")
     }
 
     private fun postNightSummaryNotification(summary: NightSummary) {
@@ -371,6 +426,12 @@ class BedtimeService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val restart = PendingIntent.getService(
+            this,
+            3,
+            Intent(this, BedtimeService::class.java).setAction(ACTION_RESTART),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val stop = PendingIntent.getService(
             this,
             1,
@@ -382,14 +443,31 @@ class BedtimeService : Service() {
             .setContentText(content)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(open)
-            .addAction(0, "Stop", stop)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
+            .addAction(
+                R.drawable.ic_notif_restart,
+                getString(R.string.notification_action_restart),
+                restart
+            )
+            .addAction(
+                R.drawable.ic_notif_stop,
+                getString(R.string.notification_action_stop),
+                stop
+            )
+            .setStyle(
+                MediaNotificationCompat.MediaStyle()
+                    .setShowActionsInCompactView(0, 1)
+            )
             .build()
     }
 
     override fun onDestroy() {
         loadJob?.cancel()
         timerJob?.cancel()
+        shutdownJob?.cancel()
         stirDetector?.stop()
         player.release()
         scope.cancel()

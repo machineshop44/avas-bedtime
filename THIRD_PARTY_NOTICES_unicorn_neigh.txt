@@ -1,0 +1,5 @@
+﻿unicorn_neigh.wav — based on Mixkit “Scared horse neighing”
+Source: https://mixkit.co/free-sound-effects/scared-horse-neighing/
+License: Mixkit Stock Sound Effects Free License
+  https://mixkit.co/license/#sfxFree
+Converted to mono 22.05 kHz PCM for the unicorn tap easter egg.

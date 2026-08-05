@@ -25,13 +25,21 @@ class AvaBedtimeApp : Application() {
 
     private fun createNotificationChannels() {
         val manager = getSystemService(NotificationManager::class.java)
+        // New id so lock-screen visibility / importance actually apply (Android won't
+        // fully update those on an already-created channel).
         manager.createNotificationChannel(
             NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
                 getString(R.string.notification_channel_name),
-                NotificationManager.IMPORTANCE_LOW
-            )
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = getString(R.string.notification_channel_desc)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                setShowBadge(false)
+            }
         )
+        // Remove legacy low-importance channel if present.
+        runCatching { manager.deleteNotificationChannel("bedtime_playback") }
         manager.createNotificationChannel(
             NotificationChannel(
                 NIGHT_SUMMARY_CHANNEL_ID,
@@ -44,7 +52,7 @@ class AvaBedtimeApp : Application() {
     }
 
     companion object {
-        const val NOTIFICATION_CHANNEL_ID = "bedtime_playback"
+        const val NOTIFICATION_CHANNEL_ID = "bedtime_playback_v2"
         const val NIGHT_SUMMARY_CHANNEL_ID = "night_summary"
     }
 }

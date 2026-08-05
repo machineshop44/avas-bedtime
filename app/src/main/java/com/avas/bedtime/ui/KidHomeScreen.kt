@@ -17,7 +17,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -55,10 +55,14 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -85,16 +89,20 @@ import kotlinx.coroutines.delay
 private data class HomeMetrics(
     val photoSize: Dp,
     val buttonSize: Dp,
+    val stopMinWidth: Dp,
+    val stopHeight: Dp,
     val nameSp: Float,
     val themeSp: Float,
     val statusSp: Float,
     val timerSp: Float,
     val buttonLabelSp: Float,
+    val stopLabelSp: Float,
     val topPad: Dp,
     val gapAfterPhoto: Dp,
     val gapBeforeButton: Dp,
     val contentTopBias: Dp,
-    val stopVerticalPad: Dp
+    /** Tall phones: vertically center START / RESTART in leftover space. */
+    val centerActions: Boolean
 )
 
 @Composable
@@ -104,63 +112,79 @@ private fun rememberHomeMetrics(
     sessionActive: Boolean
 ): HomeMetrics {
     val tabletish = maxWidth >= 600.dp || maxHeight >= 900.dp
-    // Active session stacks RESTART + STOP; phones need a tighter layout.
+    val phone = !tabletish && maxWidth < 600.dp
+    val tallPhone = phone && maxHeight >= 700.dp
+    // Portrait tablets (and tall phones) need the START block centered — otherwise
+    // everything piles into the top third with a huge empty lower half.
+    val tallPortrait = maxHeight > maxWidth * 1.15f
     return when {
-        maxHeight < 700.dp || (maxWidth < 500.dp && !tabletish) -> HomeMetrics(
-            photoSize = if (sessionActive) 68.dp else 84.dp,
-            buttonSize = if (sessionActive) 124.dp else 140.dp,
+        phone && maxHeight < 700.dp -> HomeMetrics(
+            photoSize = if (sessionActive) 72.dp else 88.dp,
+            buttonSize = if (sessionActive) 132.dp else 148.dp,
+            stopMinWidth = 176.dp,
+            stopHeight = 52.dp,
             nameSp = if (sessionActive) 30f else 34f,
             themeSp = 16f,
             statusSp = 16f,
             timerSp = if (sessionActive) 26f else 28f,
-            buttonLabelSp = if (sessionActive) 24f else 30f,
+            buttonLabelSp = if (sessionActive) 26f else 32f,
+            stopLabelSp = 20f,
             topPad = 4.dp,
             gapAfterPhoto = 4.dp,
-            gapBeforeButton = 8.dp,
-            contentTopBias = 0.dp,
-            stopVerticalPad = 14.dp
-        )
-        maxHeight < 800.dp && !tabletish -> HomeMetrics(
-            photoSize = if (sessionActive) 96.dp else 116.dp,
-            buttonSize = if (sessionActive) 156.dp else 176.dp,
-            nameSp = 36f,
-            themeSp = 20f,
-            statusSp = 18f,
-            timerSp = 30f,
-            buttonLabelSp = if (sessionActive) 28f else 34f,
-            topPad = 8.dp,
-            gapAfterPhoto = 6.dp,
             gapBeforeButton = 10.dp,
             contentTopBias = 0.dp,
-            stopVerticalPad = 14.dp
+            centerActions = true
+        )
+        tallPhone -> HomeMetrics(
+            photoSize = if (sessionActive) 100.dp else 120.dp,
+            buttonSize = if (sessionActive) 168.dp else 188.dp,
+            stopMinWidth = 200.dp,
+            stopHeight = 58.dp,
+            nameSp = 38f,
+            themeSp = 20f,
+            statusSp = 18f,
+            timerSp = 32f,
+            buttonLabelSp = if (sessionActive) 30f else 38f,
+            stopLabelSp = 22f,
+            topPad = 8.dp,
+            gapAfterPhoto = 8.dp,
+            gapBeforeButton = 12.dp,
+            contentTopBias = 0.dp,
+            centerActions = true
         )
         tabletish -> HomeMetrics(
             photoSize = 168.dp,
             buttonSize = 220.dp,
+            stopMinWidth = 240.dp,
+            stopHeight = 68.dp,
             nameSp = 48f,
             themeSp = 26f,
             statusSp = 24f,
             timerSp = 36f,
             buttonLabelSp = 44f,
-            topPad = 40.dp,
+            stopLabelSp = 26f,
+            topPad = if (tallPortrait) 24.dp else 40.dp,
             gapAfterPhoto = 16.dp,
             gapBeforeButton = 16.dp,
-            contentTopBias = 72.dp,
-            stopVerticalPad = 14.dp
+            contentTopBias = if (tallPortrait) 0.dp else 72.dp,
+            centerActions = tallPortrait
         )
         else -> HomeMetrics(
             photoSize = 148.dp,
             buttonSize = if (sessionActive) 184.dp else 200.dp,
+            stopMinWidth = 216.dp,
+            stopHeight = 62.dp,
             nameSp = 44f,
             themeSp = 22f,
             statusSp = 20f,
             timerSp = 32f,
             buttonLabelSp = if (sessionActive) 34f else 40f,
+            stopLabelSp = 24f,
             topPad = 16.dp,
             gapAfterPhoto = 10.dp,
             gapBeforeButton = 12.dp,
             contentTopBias = if (sessionActive) 12.dp else 36.dp,
-            stopVerticalPad = 14.dp
+            centerActions = tallPortrait
         )
     }
 }
@@ -229,7 +253,6 @@ fun KidHomeScreen(
             .background(colors.background)
     ) {
         SoftAtmosphere(colors = colors)
-        ThemePasserby(colors = colors)
         val metrics = rememberHomeMetrics(maxHeight, maxWidth, sessionActive = session.active)
 
         Column(
@@ -358,10 +381,23 @@ fun KidHomeScreen(
                     .weight(1f)
                     .fillMaxWidth()
                     .clipToBounds()
-                    .verticalScroll(rememberScrollState())
+                    .then(
+                        if (metrics.centerActions) {
+                            Modifier
+                        } else {
+                            Modifier.verticalScroll(rememberScrollState())
+                        }
+                    )
                     .padding(horizontal = 24.dp)
-                    .padding(top = metrics.contentTopBias, bottom = 20.dp),
-                verticalArrangement = Arrangement.Top,
+                    .padding(
+                        top = if (metrics.centerActions) 8.dp else metrics.contentTopBias,
+                        bottom = 24.dp
+                    ),
+                verticalArrangement = if (metrics.centerActions) {
+                    Arrangement.Center
+                } else {
+                    Arrangement.Top
+                },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
@@ -422,33 +458,21 @@ fun KidHomeScreen(
                             context.startService(intent)
                         }
                     )
-                    Spacer(Modifier.height(14.dp))
-                    Box(
-                        modifier = Modifier
-                            .shadow(
-                                elevation = 8.dp,
-                                shape = RoundedCornerShape(28.dp),
-                                ambientColor = colors.shadowTint,
-                                spotColor = colors.shadowTint
-                            )
-                            .widthIn(min = 180.dp)
-                            .clip(RoundedCornerShape(28.dp))
-                            .background(colors.stopButton)
-                            .clickable {
-                                val intent = Intent(context, BedtimeService::class.java)
-                                    .setAction(BedtimeService.ACTION_STOP)
-                                context.startService(intent)
-                            }
-                            .padding(horizontal = 28.dp, vertical = metrics.stopVerticalPad),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "STOP",
-                            style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp),
-                            color = colors.buttonText,
-                            maxLines = 1
-                        )
-                    }
+                    Spacer(Modifier.height(12.dp))
+                    GlossyPillButton(
+                        label = "STOP",
+                        color = colors.stopButton,
+                        textColor = colors.buttonText,
+                        shadowTint = colors.shadowTint,
+                        minWidth = metrics.stopMinWidth,
+                        height = metrics.stopHeight,
+                        labelSp = metrics.stopLabelSp,
+                        onClick = {
+                            val intent = Intent(context, BedtimeService::class.java)
+                                .setAction(BedtimeService.ACTION_STOP)
+                            context.startService(intent)
+                        }
+                    )
                 } else {
                     BigRoundButton(
                         label = "START",
@@ -473,6 +497,11 @@ fun KidHomeScreen(
                 }
             }
         }
+        // Draw above home UI so the unicorn isn't hidden under START/STOP.
+        ThemePasserby(
+            colors = colors,
+            avaPhotoPath = settings.avaPhotoPath
+        )
     }
 }
 
@@ -588,11 +617,20 @@ private fun BigRoundButton(
     labelSp: Float,
     onClick: () -> Unit
 ) {
+    val highlight = Color.White.copy(alpha = 0.42f)
+    val mid = color
+    val deep = Color(
+        red = (color.red * 0.78f).coerceIn(0f, 1f),
+        green = (color.green * 0.78f).coerceIn(0f, 1f),
+        blue = (color.blue * 0.78f).coerceIn(0f, 1f),
+        alpha = color.alpha
+    )
+    val rimLight = Color.White.copy(alpha = 0.38f)
     Box(
         modifier = Modifier
             .scale(scale)
             .shadow(
-                elevation = 32.dp,
+                elevation = 28.dp,
                 shape = CircleShape,
                 ambientColor = shadowTint,
                 spotColor = shadowTint,
@@ -602,12 +640,12 @@ private fun BigRoundButton(
             .clip(CircleShape)
             .background(
                 Brush.verticalGradient(
-                    listOf(
-                        color.copy(alpha = 1f),
-                        color.copy(alpha = 0.88f)
-                    )
+                    0f to Color.White.copy(alpha = 0.28f).compositeOver(mid),
+                    0.38f to mid,
+                    1f to deep
                 )
             )
+            .border(width = 2.5.dp, color = rimLight, shape = CircleShape)
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -615,6 +653,42 @@ private fun BigRoundButton(
             ),
         contentAlignment = Alignment.Center
     ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val r = this.size.minDimension / 2f
+            // Soft top gloss.
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(highlight, Color.Transparent),
+                    center = Offset(this.size.width * 0.5f, this.size.height * 0.28f),
+                    radius = r * 0.72f
+                )
+            )
+            // Bottom shade for roundness.
+            drawCircle(
+                brush = Brush.radialGradient(
+                    0.58f to Color.Transparent,
+                    1f to Color.Black.copy(alpha = 0.16f),
+                    center = Offset(this.size.width * 0.5f, this.size.height * 0.55f),
+                    radius = r
+                )
+            )
+            // Inner rim ring.
+            drawCircle(
+                color = Color.White.copy(alpha = 0.22f),
+                radius = r - 5.dp.toPx(),
+                style = Stroke(width = 2.5.dp.toPx())
+            )
+            // Tiny highlight crescent near top.
+            drawArc(
+                color = Color.White.copy(alpha = 0.35f),
+                startAngle = 200f,
+                sweepAngle = 140f,
+                useCenter = false,
+                topLeft = Offset(r * 0.28f, r * 0.16f),
+                size = Size(r * 1.44f, r * 0.9f),
+                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+            )
+        }
         Text(
             text = label,
             style = MaterialTheme.typography.headlineLarge.copy(
@@ -627,6 +701,124 @@ private fun BigRoundButton(
             overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+/** Same gloss language as [BigRoundButton], stadium / pill shape for STOP. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun GlossyPillButton(
+    label: String,
+    color: Color,
+    textColor: Color,
+    shadowTint: Color,
+    minWidth: Dp,
+    height: Dp,
+    labelSp: Float,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(percent = 50)
+    val highlight = Color.White.copy(alpha = 0.42f)
+    val mid = color
+    val deep = Color(
+        red = (color.red * 0.78f).coerceIn(0f, 1f),
+        green = (color.green * 0.78f).coerceIn(0f, 1f),
+        blue = (color.blue * 0.78f).coerceIn(0f, 1f),
+        alpha = color.alpha
+    )
+    val rimLight = Color.White.copy(alpha = 0.38f)
+    Box(
+        modifier = Modifier
+            .shadow(
+                elevation = 18.dp,
+                shape = shape,
+                ambientColor = shadowTint,
+                spotColor = shadowTint,
+                clip = false
+            )
+            .height(height)
+            .widthIn(min = minWidth)
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    0f to Color.White.copy(alpha = 0.28f).compositeOver(mid),
+                    0.38f to mid,
+                    1f to deep
+                )
+            )
+            .border(width = 2.5.dp, color = rimLight, shape = shape)
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(horizontal = 28.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.matchParentSize()) {
+            val w = this.size.width
+            val h = this.size.height
+            val corner = h / 2f
+            // Soft top gloss blob.
+            drawRoundRect(
+                brush = Brush.radialGradient(
+                    colors = listOf(highlight, Color.Transparent),
+                    center = Offset(w * 0.5f, h * 0.22f),
+                    radius = w * 0.42f
+                ),
+                cornerRadius = CornerRadius(corner, corner)
+            )
+            // Bottom shade for roundness.
+            drawRoundRect(
+                brush = Brush.verticalGradient(
+                    0.45f to Color.Transparent,
+                    1f to Color.Black.copy(alpha = 0.16f)
+                ),
+                cornerRadius = CornerRadius(corner, corner)
+            )
+            // Inner rim nearly flush with outer edge (same idea as RESTART).
+            val inset = 4.dp.toPx()
+            drawRoundRect(
+                color = Color.White.copy(alpha = 0.22f),
+                topLeft = Offset(inset, inset),
+                size = Size(w - inset * 2f, h - inset * 2f),
+                cornerRadius = CornerRadius(corner - inset, corner - inset),
+                style = Stroke(width = 2.5.dp.toPx())
+            )
+            // Top highlight crescent.
+            drawArc(
+                color = Color.White.copy(alpha = 0.35f),
+                startAngle = 200f,
+                sweepAngle = 140f,
+                useCenter = false,
+                topLeft = Offset(w * 0.18f, h * 0.12f),
+                size = Size(w * 0.64f, h * 0.72f),
+                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+            )
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontSize = labelSp.sp,
+                letterSpacing = 0.8.sp
+            ),
+            color = textColor,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+private fun Color.compositeOver(destination: Color): Color {
+    val a = alpha
+    val aOut = a + destination.alpha * (1f - a)
+    if (aOut < 1e-4f) return Color.Transparent
+    return Color(
+        red = (red * a + destination.red * destination.alpha * (1f - a)) / aOut,
+        green = (green * a + destination.green * destination.alpha * (1f - a)) / aOut,
+        blue = (blue * a + destination.blue * destination.alpha * (1f - a)) / aOut,
+        alpha = aOut
+    )
 }
 
 private fun startBedtime(context: android.content.Context) {
