@@ -246,6 +246,20 @@ class StirDetector(
                     val read = recorder.read(buffer, 0, buffer.size)
                     if (read <= 0) continue
 
+                    val ignoring = System.currentTimeMillis() < ignoreUntilMs
+                    // During mute/cooldown, drain the buffer; light baseline only (skip full DSP).
+                    if (ignoring && micBaselineReady) {
+                        if ((micChunks++ % 4) == 0) {
+                            var sum = 0.0
+                            for (i in 0 until read) sum += abs(buffer[i].toInt())
+                            val average = (sum / read).toFloat()
+                            micBaseline = micBaseline * 0.7f + average * 0.3f
+                        }
+                        buffer.fill(0)
+                        loudStreak = 0
+                        continue
+                    }
+
                     var sum = 0.0
                     var highSum = 0.0
                     var prev = 0
@@ -272,14 +286,6 @@ class StirDetector(
                             micBaselineReady = true
                             Log.i(TAG, "Mic ambient baseline=$micBaseline")
                         }
-                        continue
-                    }
-
-                    val ignoring = System.currentTimeMillis() < ignoreUntilMs
-                    // During track changes, snap ambient toward the new song level quickly.
-                    if (ignoring) {
-                        micBaseline = micBaseline * 0.65f + average * 0.35f
-                        loudStreak = 0
                         continue
                     }
 
@@ -365,12 +371,12 @@ class StirDetector(
         sensorManager.registerListener(
             motionListener,
             sensor,
-            SensorManager.SENSOR_DELAY_GAME
+            SensorManager.SENSOR_DELAY_UI
         )
         motionListening = true
         Log.i(
             TAG,
-            "Motion listening for bed movement (${if (usingRawAccelerometer) "accelerometer" else "linear"})"
+            "Motion listening for bed movement (${if (usingRawAccelerometer) "accelerometer" else "linear"}, UI rate)"
         )
     }
 

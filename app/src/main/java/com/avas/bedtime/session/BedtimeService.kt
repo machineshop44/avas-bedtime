@@ -10,7 +10,6 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.media.app.NotificationCompat as MediaNotificationCompat
 import com.avas.bedtime.AvaBedtimeApp
 import com.avas.bedtime.MainActivity
 import com.avas.bedtime.R
@@ -54,6 +53,7 @@ class BedtimeService : Service() {
     private var loadJob: Job? = null
     private var shutdownJob: Job? = null
     private var endsAtElapsed = 0L
+    private var lastNotificationContent: String? = null
 
     private var loggingSession = false
     private var sessionStartedAtMs = 0L
@@ -113,7 +113,9 @@ class BedtimeService : Service() {
         )
 
         resetNightCounters()
+        lastNotificationContent = null
         startForeground(NOTIFICATION_ID, buildPlaybackNotification("Starting bedtime…"))
+        lastNotificationContent = "Starting bedtime…"
         _state.value = BedtimeSessionState(
             active = true,
             endsAtElapsedRealtime = endsAtElapsed,
@@ -224,16 +226,17 @@ class BedtimeService : Service() {
                     endsAtElapsedRealtime = endsAtElapsed,
                     statusMessage = status
                 )
-                startForeground(
-                    NOTIFICATION_ID,
-                    buildPlaybackNotification(
-                        if (remaining == 0L) {
-                            "Timer finished"
-                        } else {
-                            "Bedtime · ${formatRemaining(remaining)} left"
-                        }
-                    )
-                )
+                val notifContent = when {
+                    remaining == 0L -> "Timer finished"
+                    status == "Starting over" ->
+                        "Starting over · ${formatRemaining(remaining)} left"
+                    else -> "Bedtime · ${formatRemaining(remaining)} left"
+                }
+                // Remaining text only changes each minute — avoid rebuilding every second.
+                if (notifContent != lastNotificationContent) {
+                    lastNotificationContent = notifContent
+                    startForeground(NOTIFICATION_ID, buildPlaybackNotification(notifContent))
+                }
                 if (remaining == 0L) {
                     Log.i(TAG, "Wake/duration timer reached — ending session + night summary")
                     stopSession(reason = "timer")
@@ -274,10 +277,13 @@ class BedtimeService : Service() {
             lastStirSource = sourceLabel ?: _state.value.lastStirSource,
             statusMessage = "Starting over"
         )
+        val left = formatRemaining(max(0L, timerEnd - SystemClock.elapsedRealtime()))
+        val notifContent = "Starting over · $left left"
+        lastNotificationContent = notifContent
+        startForeground(NOTIFICATION_ID, buildPlaybackNotification(notifContent))
         Log.i(
             TAG,
-            "Playlist restarted (mute ${muteMs}ms); timer unchanged " +
-                "(${formatRemaining(max(0L, timerEnd - SystemClock.elapsedRealtime()))} left)"
+            "Playlist restarted (mute ${muteMs}ms); timer unchanged ($left left)"
         )
     }
 
@@ -354,6 +360,7 @@ class BedtimeService : Service() {
                 if (reason == "timer") "Sending night summary…" else "Stopping…"
             )
         )
+        lastNotificationContent = if (reason == "timer") "Sending night summary…" else "Stopping…"
 
         shutdownJob = scope.launch(Dispatchers.IO) {
             try {
@@ -438,6 +445,12 @@ class BedtimeService : Service() {
             Intent(this, BedtimeService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val views = android.widget.RemoteViews(packageName, R.layout.notification_playback).apply {
+            setTextViewText(R.id.notif_title, getString(R.string.notification_title))
+            setTextViewText(R.id.notif_text, content)
+            setOnClickPendingIntent(R.id.notif_btn_restart, restart)
+            setOnClickPendingIntent(R.id.notif_btn_stop, stop)
+        }
         return NotificationCompat.Builder(this, AvaBedtimeApp.NOTIFICATION_CHANNEL_ID)
             .setContentTitle(getString(R.string.notification_title))
             .setContentText(content)
@@ -447,20 +460,10 @@ class BedtimeService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
-            .addAction(
-                R.drawable.ic_notif_restart,
-                getString(R.string.notification_action_restart),
-                restart
-            )
-            .addAction(
-                R.drawable.ic_notif_stop,
-                getString(R.string.notification_action_stop),
-                stop
-            )
-            .setStyle(
-                MediaNotificationCompat.MediaStyle()
-                    .setShowActionsInCompactView(0, 1)
-            )
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(views)
+            .setCustomBigContentView(views)
+            .setCustomHeadsUpContentView(views)
             .build()
     }
 

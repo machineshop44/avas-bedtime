@@ -80,7 +80,7 @@ class PlexTimelineReporter(
         stopPulse()
         pulseJob = scope.launch {
             while (isActive && playing) {
-                delay(10_000)
+                delay(30_000)
                 if (playing && currentRatingKey.isNotBlank()) {
                     report("playing", positionProvider())
                 }

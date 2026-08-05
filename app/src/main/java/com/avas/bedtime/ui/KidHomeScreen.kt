@@ -224,7 +224,7 @@ fun KidHomeScreen(
     LaunchedEffect(session.active) {
         while (session.active) {
             tick = SystemClock.elapsedRealtime()
-            delay(500)
+            delay(1_000)
         }
     }
     val remaining = if (session.active) {
