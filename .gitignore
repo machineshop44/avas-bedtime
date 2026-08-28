@@ -22,3 +22,7 @@ Thumbs.db
 .env.*
 *.keystore
 *.jks
+
+# Local temp / export scratch
+.tmp-screens/
+.tmp-sfx/
