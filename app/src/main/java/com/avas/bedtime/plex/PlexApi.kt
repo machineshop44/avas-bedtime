@@ -14,7 +14,10 @@ import org.json.JSONObject
 
 object PlexHeaders {
     const val PRODUCT = "Ava Bedtime"
-    const val VERSION = "0.1.0"
+    val VERSION: String
+        get() = runCatching {
+            com.avas.bedtime.BuildConfig.VERSION_NAME
+        }.getOrDefault("0.6.9")
     const val PLATFORM = "Android"
 }
 
@@ -295,10 +298,11 @@ class PlexApi(
         }
     }
 
-    fun streamUrl(serverUrl: String, token: String, partKey: String): String {
+    fun streamUrl(serverUrl: String, partKey: String): String {
         val base = serverUrl.trimEnd('/')
         val key = if (partKey.startsWith("/")) partKey else "/$partKey"
-        return "$base$key?X-Plex-Token=$token"
+        // Token is sent via ExoPlayer request headers, not the query string.
+        return "$base$key"
     }
 
     /** Prefer home Wi‑Fi, then remote, then relay — without testing reachability. */

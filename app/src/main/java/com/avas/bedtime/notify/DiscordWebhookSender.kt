@@ -16,6 +16,9 @@ object DiscordWebhookSender {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
+    private val asyncExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "DiscordWebhook").apply { isDaemon = true }
+    }
 
     fun isValidWebhookUrl(url: String): Boolean {
         val trimmed = url.trim()
@@ -28,9 +31,9 @@ object DiscordWebhookSender {
      * so the process is not killed before the request finishes.
      */
     fun sendNightSummaryAsync(webhookUrl: String, title: String, body: String) {
-        Thread {
+        asyncExecutor.execute {
             sendNightSummarySync(webhookUrl, title, body)
-        }.start()
+        }
     }
 
     /**
@@ -61,18 +64,23 @@ object DiscordWebhookSender {
             .header("User-Agent", "AvaBedtime")
             .build()
 
-        return runCatching {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "Discord webhook HTTP ${response.code}: ${response.body?.string()}")
-                    false
-                } else {
-                    Log.i(TAG, "Discord night summary sent")
-                    true
+        repeat(3) { attempt ->
+            val ok = runCatching {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        Log.e(TAG, "Discord webhook HTTP ${response.code} (attempt ${attempt + 1})")
+                        false
+                    } else {
+                        Log.i(TAG, "Discord night summary sent")
+                        true
+                    }
                 }
-            }
-        }.onFailure {
-            Log.e(TAG, "Discord webhook failed", it)
-        }.getOrDefault(false)
+            }.onFailure {
+                Log.e(TAG, "Discord webhook failed (attempt ${attempt + 1})", it)
+            }.getOrDefault(false)
+            if (ok) return true
+            if (attempt < 2) Thread.sleep(1_500L * (attempt + 1))
+        }
+        return false
     }
 }

@@ -65,7 +65,24 @@ Get-ChildItem -LiteralPath $DriveApks -Filter "AvaBedtime*.apk" -ErrorAction Sil
 
 Copy-Item -LiteralPath $ApkSource -Destination $destPath -Force
 
+# Zip companion — Android Drive often blocks raw .apk download/open.
+$zipName = "$Prefix$versionName-$code.zip"
+$zipPath = Join-Path $DriveApks $zipName
+$stagingApk = Join-Path $env:TEMP $destName
+Copy-Item -LiteralPath $ApkSource -Destination $stagingApk -Force
+if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+Compress-Archive -LiteralPath $stagingApk -DestinationPath $zipPath -Force
+Remove-Item -LiteralPath $stagingApk -Force -ErrorAction SilentlyContinue
+
+Get-ChildItem -LiteralPath $DriveApks -Filter "AvaBedtime*.zip" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -ne $zipName } |
+    ForEach-Object {
+        $removed += $_.Name
+        Remove-Item -LiteralPath $_.FullName -Force
+    }
+
 Write-Host "Drive apks (Ava): $destPath"
+Write-Host "Drive zip (Ava):  $zipPath"
 if ($removed.Count -gt 0) {
-    Write-Host "Removed older Ava APKs: $($removed -join ', ')"
+    Write-Host "Removed older Ava files: $($removed -join ', ')"
 }

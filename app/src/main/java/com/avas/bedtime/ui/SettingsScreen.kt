@@ -1,7 +1,6 @@
 package com.avas.bedtime.ui
 
 import android.content.Intent
-import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -217,7 +216,7 @@ fun SettingsScreen(
         loadPlaylistsForUrl(url, token, current.clientId)
     }
 
-    LaunchedEffect(settings.plexToken, settings.serverUrl, settings.clientId, signIn.signedIn) {
+    LaunchedEffect(settings.plexToken, settings.clientId, signIn.signedIn) {
         if (settings.isPlexSignedIn) {
             busy = true
             status = "Connecting to Plex…"
@@ -309,7 +308,8 @@ fun SettingsScreen(
         if (settings.hasAvaPhoto) {
             val bitmap = remember(settings.avaPhotoPath) {
                 runCatching {
-                    BitmapFactory.decodeFile(settings.avaPhotoPath)?.asImageBitmap()
+                    AvaPhotoStore.decodeFileForDisplay(settings.avaPhotoPath, maxEdge = 512)
+                        ?.asImageBitmap()
                 }.getOrNull()
             }
             if (bitmap != null) {
@@ -757,12 +757,17 @@ fun SettingsScreen(
     cropSource?.let { bitmap ->
         CircularPhotoCropOverlay(
             source = bitmap,
-            onCancel = { cropSource = null },
+            onCancel = {
+                if (!bitmap.isRecycled) bitmap.recycle()
+                cropSource = null
+            },
             onCropped = { cropped ->
                 scope.launch {
                     val ok = withContext(Dispatchers.IO) {
                         AvaPhotoStore.saveBitmap(context, cropped)
                     }
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                    if (!cropped.isRecycled) cropped.recycle()
                     cropSource = null
                     if (ok) {
                         val path = AvaPhotoStore.photoFile(context).absolutePath

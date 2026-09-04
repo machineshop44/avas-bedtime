@@ -89,7 +89,9 @@ fun ThemePasserby(
             null
         } else {
             runCatching {
-                BitmapFactory.decodeFile(avaPhotoPath)?.asImageBitmap()
+                com.avas.bedtime.data.AvaPhotoStore
+                    .decodeFileForDisplay(avaPhotoPath, maxEdge = 256)
+                    ?.asImageBitmap()
             }.getOrNull()
         }
     }

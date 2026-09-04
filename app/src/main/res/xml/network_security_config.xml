@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Plex on the home LAN often uses plain HTTP on port 32400. -->
+    <!--
+      Cleartext is required for local Plex (http://192.168.x.x:32400).
+      Android domain-config cannot match private IP ranges, so base cleartext stays on.
+      plex.direct is listed explicitly for remote/relay HTTP endpoints.
+    -->
     <base-config cleartextTrafficPermitted="true" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">plex.direct</domain>
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
 </network-security-config>

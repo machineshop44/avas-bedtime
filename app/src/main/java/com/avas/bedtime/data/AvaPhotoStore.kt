@@ -158,6 +158,22 @@ object AvaPhotoStore {
         }.getOrDefault(false)
     }
 
+    /** Downsampled decode for on-screen display (home/settings) — avoids keeping full-res bitmaps. */
+    fun decodeFileForDisplay(path: String, maxEdge: Int = 512): Bitmap? {
+        if (path.isBlank()) return null
+        return runCatching {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, bounds)
+            var sample = 1
+            val edge = maxOf(bounds.outWidth, bounds.outHeight).coerceAtLeast(1)
+            while (edge / sample > maxEdge) sample *= 2
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            BitmapFactory.decodeFile(path, opts)
+        }.onFailure {
+            Log.e(TAG, "Failed to decode display photo", it)
+        }.getOrNull()
+    }
+
     fun copyFromUri(context: Context, uri: Uri): Boolean {
         val bitmap = decodeUri(context, uri) ?: return false
         return saveBitmap(context, bitmap)

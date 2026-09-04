@@ -4,6 +4,7 @@ import android.util.Log
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -11,7 +12,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -65,7 +65,8 @@ class PlexTimelineReporter(
         playing = false
         stopPulse()
         if (currentRatingKey.isNotBlank()) {
-            report("stopped", positionProvider())
+            // Use a process-wide executor so "stopped" still fires after service scope cancel.
+            reportIndependent("stopped", currentRatingKey, positionProvider(), currentDurationMs)
         }
         currentRatingKey = ""
     }
@@ -107,12 +108,28 @@ class PlexTimelineReporter(
         }
     }
 
-    private suspend fun postTimeline(
+    private fun reportIndependent(
         state: String,
         ratingKey: String,
         timeMs: Long,
         durationMs: Long
-    ) = withContext(Dispatchers.IO) {
+    ) {
+        val time = timeMs.coerceIn(0L, durationMs.coerceAtLeast(1L))
+        ioExecutor.execute {
+            runCatching {
+                postTimeline(state, ratingKey, time, durationMs.coerceAtLeast(1L))
+            }.onFailure {
+                Log.w(TAG, "Timeline $state failed: ${it.message}")
+            }
+        }
+    }
+
+    private fun postTimeline(
+        state: String,
+        ratingKey: String,
+        timeMs: Long,
+        durationMs: Long
+    ) {
         val base = serverUrl.trimEnd('/')
         val keyPath = "/library/metadata/$ratingKey"
         val query = buildString {
@@ -141,7 +158,6 @@ class PlexTimelineReporter(
             .build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                // Some PMS builds prefer GET.
                 val getReq = request.newBuilder().get().build()
                 http.newCall(getReq).execute().use { getResponse ->
                     if (!getResponse.isSuccessful) {
@@ -158,5 +174,8 @@ class PlexTimelineReporter(
 
     companion object {
         private const val TAG = "PlexTimeline"
+        private val ioExecutor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "PlexTimeline").apply { isDaemon = true }
+        }
     }
 }

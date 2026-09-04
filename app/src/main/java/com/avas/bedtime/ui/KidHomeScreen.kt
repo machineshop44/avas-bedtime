@@ -3,7 +3,6 @@ package com.avas.bedtime.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -208,11 +207,8 @@ fun KidHomeScreen(
     }
 
     fun neededPermissions(): Array<String> {
-        val list = mutableListOf(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 33) {
-            list += Manifest.permission.POST_NOTIFICATIONS
-        }
-        return list.toTypedArray()
+        // Mic is required for stir detection. Notifications are optional — FGS still runs.
+        return arrayOf(Manifest.permission.RECORD_AUDIO)
     }
 
     fun hasPermissions(): Boolean =
@@ -274,7 +270,8 @@ fun KidHomeScreen(
                     if (settings.hasAvaPhoto) {
                         val bitmap = remember(settings.avaPhotoPath) {
                             runCatching {
-                                android.graphics.BitmapFactory.decodeFile(settings.avaPhotoPath)
+                                com.avas.bedtime.data.AvaPhotoStore
+                                    .decodeFileForDisplay(settings.avaPhotoPath, maxEdge = 512)
                                     ?.asImageBitmap()
                             }.getOrNull()
                         }

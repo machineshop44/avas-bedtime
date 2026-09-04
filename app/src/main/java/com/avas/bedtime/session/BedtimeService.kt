@@ -66,12 +66,26 @@ class BedtimeService : Service() {
     private var farthestTitle = ""
     private var farthestPositionMs = 0L
     private var trackCount = 0
+    /** Bumped on START/STOP so cancelled Discord shutdown cannot stopSelf a new session. */
+    private var lifecycleGeneration = 0
+    /** Bumped when playback ownership changes so a late load cannot resume after STOP. */
+    private var playGeneration = 0
 
     override fun onCreate() {
         super.onCreate()
         player = PlaylistPlayer(this, scope)
         player.onTrackChanged = {
             stirDetector?.ignoreAudioChange()
+        }
+        player.onPlaybackError = { code ->
+            scope.launch {
+                if (_state.value.active) {
+                    _state.value = _state.value.copy(
+                        statusMessage = "Connection issue — recovering ($code)"
+                    )
+                    stirDetector?.ignoreAudioChange(8_000L)
+                }
+            }
         }
         instance = this
         _state.value = BedtimeSessionState()
@@ -83,17 +97,30 @@ class BedtimeService : Service() {
                 // Never reset an in-progress bedtime timer if Start is sent again.
                 if (_state.value.active && endsAtElapsed > SystemClock.elapsedRealtime()) {
                     Log.i(TAG, "Start ignored — session already active; timer unchanged")
-                    return START_STICKY
+                    return START_NOT_STICKY
                 }
                 startSession(latestSettings)
             }
             ACTION_STOP -> stopSession(reason = "manual")
             ACTION_RESTART -> restartPlaylistOnly(sourceLabel = null)
+            else -> {
+                // Sticky/system restart with no action: satisfy FGS timeout then exit.
+                // Full overnight restore needs persisted session state (not done here).
+                Log.w(TAG, "onStartCommand with no action — promoting FGS then stopping")
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildPlaybackNotification("Stopped")
+                )
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startSession(settings: BedtimeSettings) {
+        // Invalidate any in-flight Discord shutdown so its finally cannot stopSelf us.
+        lifecycleGeneration++
         shutdownJob?.cancel()
         shutdownJob = null
         endsAtElapsed = when (settings.resolvedEndMode) {
@@ -123,14 +150,19 @@ class BedtimeService : Service() {
         )
 
         loadJob?.cancel()
+        val loadGen = ++playGeneration
         loadJob = scope.launch {
-            val started = startPlayback(settings)
+            val started = startPlayback(settings, loadGen)
+            if (!isActive || loadGen != playGeneration) return@launch
             if (!started) {
                 _state.value = _state.value.copy(
-                    statusMessage = "Could not load Plex playlist — playing demo"
+                    statusMessage = "Could not reach Plex — playing offline tone"
                 )
-                player.playDemoToneLoop()
+                if (loadGen == playGeneration) {
+                    player.playDemoToneLoop()
+                }
             }
+            if (!isActive || loadGen != playGeneration) return@launch
             beginMonitoring(settings)
         }
     }
@@ -149,7 +181,7 @@ class BedtimeService : Service() {
         trackCount = 0
     }
 
-    private suspend fun startPlayback(settings: BedtimeSettings): Boolean {
+    private suspend fun startPlayback(settings: BedtimeSettings, loadGen: Int): Boolean {
         if (!settings.hasBedtimePlaylist) return false
         return withContext(Dispatchers.IO) {
             runCatching {
@@ -171,6 +203,7 @@ class BedtimeService : Service() {
                 }
                 if (tracks.isEmpty()) error("Playlist is empty")
                 withContext(Dispatchers.Main) {
+                    if (loadGen != playGeneration) return@withContext false
                     player.setTracks(
                         api,
                         settings.serverUrl,
@@ -178,8 +211,8 @@ class BedtimeService : Service() {
                         clientId,
                         tracks
                     )
+                    true
                 }
-                true
             }.onFailure {
                 Log.e(TAG, "Plex playback failed", it)
             }.getOrDefault(false)
@@ -313,6 +346,8 @@ class BedtimeService : Service() {
             Log.i(TAG, "stopSession($reason) ignored — shutdown already in progress")
             return
         }
+        val stopGen = ++lifecycleGeneration
+        playGeneration++
         loadJob?.cancel()
         loadJob = null
         timerJob?.cancel()
@@ -321,7 +356,7 @@ class BedtimeService : Service() {
         stirDetector = null
         noteProgress(player.currentProgress())
         closeQuietStretch()
-        player.pause()
+        player.stopAndClear()
 
         val summary = takeNightSummaryOrNull()
         _state.value = BedtimeSessionState(
@@ -375,8 +410,13 @@ class BedtimeService : Service() {
                     runCatching {
                         if (wakeLock.isHeld) wakeLock.release()
                     }
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
+                    // Skip teardown if START began a newer session while we were sending.
+                    if (stopGen == lifecycleGeneration && !_state.value.active) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                    } else {
+                        Log.i(TAG, "Shutdown teardown skipped — newer session owns the service")
+                    }
                 }
             }
         }

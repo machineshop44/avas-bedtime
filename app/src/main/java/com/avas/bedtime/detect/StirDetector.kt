@@ -351,15 +351,9 @@ class StirDetector(
     }
 
     private fun stopMic() {
+        // Cancel only — release happens in the mic job's finally to avoid double-release races.
         micJob?.cancel()
         micJob = null
-        audioRecord?.let { recorder ->
-            runCatching {
-                recorder.stop()
-                recorder.release()
-            }
-        }
-        audioRecord = null
     }
 
     private fun startMotion() {
@@ -371,12 +365,12 @@ class StirDetector(
         sensorManager.registerListener(
             motionListener,
             sensor,
-            SensorManager.SENSOR_DELAY_UI
+            SensorManager.SENSOR_DELAY_NORMAL
         )
         motionListening = true
         Log.i(
             TAG,
-            "Motion listening for bed movement (${if (usingRawAccelerometer) "accelerometer" else "linear"}, UI rate)"
+            "Motion listening for bed movement (${if (usingRawAccelerometer) "accelerometer" else "linear"}, NORMAL rate)"
         )
     }
 
