@@ -587,6 +587,16 @@ fun SettingsScreen(
                     style = SettingsTextStyles.hint
                 )
             }
+            ToggleRow(
+                "Shuffle after favorite (#1 always first)",
+                settings.shufflePlaylist
+            ) { enabled ->
+                scope.launch { repository.update { it.copy(shufflePlaylist = enabled) } }
+            }
+            Text(
+                "Keeps the first song as track 1, then shuffles the rest each night.",
+                style = SettingsTextStyles.hint
+            )
         }
 
         SectionTitle("Look & theme")
@@ -647,6 +657,35 @@ fun SettingsScreen(
                 scope.launch { repository.update { it.copy(bedtimeMinute = minute) } }
             }
         )
+        ToggleRow("Auto-start at bedtime", settings.autoStartAtBedtime) { enabled ->
+            scope.launch { repository.update { it.copy(autoStartAtBedtime = enabled) } }
+        }
+        Text(
+            "When on, bedtime starts by itself at the clock above (playlist must be set).",
+            style = SettingsTextStyles.hint
+        )
+        OutlinedButton(
+            onClick = {
+                val intent = Intent().apply {
+                    action = android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+                    data = Uri.parse("package:${context.packageName}")
+                }
+                runCatching { context.startActivity(intent) }.onFailure {
+                    context.startActivity(
+                        Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        }
+                    )
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Allow unrestricted battery")
+        }
+        Text(
+            "Helps Samsung/Pixel keep music running all night.",
+            style = SettingsTextStyles.hint
+        )
 
         if (settings.resolvedEndMode == com.avas.bedtime.data.EndMode.Duration) {
             Text("${settings.timerHours} hours", style = SettingsTextStyles.body)
@@ -654,11 +693,11 @@ fun SettingsScreen(
                 value = settings.timerHours.toFloat(),
                 onValueChange = { hours ->
                     scope.launch {
-                        repository.update { it.copy(timerHours = hours.toInt().coerceIn(1, 12)) }
+                        repository.update { it.copy(timerHours = hours.toInt().coerceIn(1, 14)) }
                     }
                 },
-                valueRange = 1f..12f,
-                steps = 10
+                valueRange = 1f..14f,
+                steps = 12
             )
         }
 

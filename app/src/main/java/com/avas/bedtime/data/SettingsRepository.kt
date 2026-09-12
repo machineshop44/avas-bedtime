@@ -38,7 +38,11 @@ data class BedtimeSettings(
     val avaPhotoPath: String = "",
     val childName: String = "Ava",
     /** Discord incoming webhook URL; blank = disabled. */
-    val discordWebhookUrl: String = ""
+    val discordWebhookUrl: String = "",
+    /** Shuffle after track #1 (favorite always plays first). */
+    val shufflePlaylist: Boolean = false,
+    /** Fire an alarm at bedtimeHour/Minute to auto-start. */
+    val autoStartAtBedtime: Boolean = false
 ) {
     val isPlexSignedIn: Boolean get() = plexToken.isNotBlank()
     val pmsToken: String get() = serverAccessToken.ifBlank { plexToken }
@@ -58,6 +62,8 @@ data class BedtimeSettings(
 }
 
 class SettingsRepository(private val context: Context) {
+    private val secrets = SecretsStore(context)
+
     private object Keys {
         val clientId = stringPreferencesKey("client_id")
         val plexToken = stringPreferencesKey("plex_token")
@@ -83,13 +89,19 @@ class SettingsRepository(private val context: Context) {
         val childName = stringPreferencesKey("child_name")
         val discordWebhookUrl = stringPreferencesKey("discord_webhook_url")
         val detectionMigrated = booleanPreferencesKey("detection_defaults_migrated_v1")
+        val secretsMigrated = booleanPreferencesKey("secrets_migrated_v1")
+        val shufflePlaylist = booleanPreferencesKey("shuffle_playlist")
+        val autoStartAtBedtime = booleanPreferencesKey("auto_start_at_bedtime")
     }
 
     val settings: Flow<BedtimeSettings> = context.dataStore.data.map { prefs ->
+        val plex = secrets.plexToken.ifBlank { prefs[Keys.plexToken].orEmpty() }
+        val server = secrets.serverAccessToken.ifBlank { prefs[Keys.serverAccessToken].orEmpty() }
+        val discord = secrets.discordWebhookUrl.ifBlank { prefs[Keys.discordWebhookUrl].orEmpty() }
         BedtimeSettings(
             clientId = prefs[Keys.clientId].orEmpty(),
-            plexToken = prefs[Keys.plexToken].orEmpty(),
-            serverAccessToken = prefs[Keys.serverAccessToken].orEmpty(),
+            plexToken = plex,
+            serverAccessToken = server,
             plexUsername = prefs[Keys.plexUsername].orEmpty(),
             serverUrl = prefs[Keys.serverUrl].orEmpty(),
             serverName = prefs[Keys.serverName].orEmpty(),
@@ -109,7 +121,9 @@ class SettingsRepository(private val context: Context) {
             cooldownSeconds = prefs[Keys.cooldownSeconds] ?: 25,
             avaPhotoPath = prefs[Keys.avaPhotoPath].orEmpty(),
             childName = prefs[Keys.childName] ?: "Ava",
-            discordWebhookUrl = prefs[Keys.discordWebhookUrl].orEmpty()
+            discordWebhookUrl = discord,
+            shufflePlaylist = prefs[Keys.shufflePlaylist] ?: false,
+            autoStartAtBedtime = prefs[Keys.autoStartAtBedtime] ?: false
         )
     }
 
@@ -140,12 +154,36 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /** Move tokens/webhook out of plaintext DataStore once. */
+    suspend fun migrateSecretsIfNeeded() {
+        context.dataStore.edit { prefs ->
+            if (prefs[Keys.secretsMigrated] == true) return@edit
+            val plex = prefs[Keys.plexToken].orEmpty()
+            val server = prefs[Keys.serverAccessToken].orEmpty()
+            val discord = prefs[Keys.discordWebhookUrl].orEmpty()
+            if (plex.isNotBlank() || server.isNotBlank() || discord.isNotBlank()) {
+                secrets.writeAll(
+                    plexToken = plex.ifBlank { secrets.plexToken },
+                    serverAccessToken = server.ifBlank { secrets.serverAccessToken },
+                    discordWebhookUrl = discord.ifBlank { secrets.discordWebhookUrl }
+                )
+            }
+            prefs.remove(Keys.plexToken)
+            prefs.remove(Keys.serverAccessToken)
+            prefs.remove(Keys.discordWebhookUrl)
+            prefs[Keys.secretsMigrated] = true
+        }
+    }
+
     suspend fun update(transform: (BedtimeSettings) -> BedtimeSettings) {
         context.dataStore.edit { prefs ->
+            val plex = secrets.plexToken.ifBlank { prefs[Keys.plexToken].orEmpty() }
+            val server = secrets.serverAccessToken.ifBlank { prefs[Keys.serverAccessToken].orEmpty() }
+            val discord = secrets.discordWebhookUrl.ifBlank { prefs[Keys.discordWebhookUrl].orEmpty() }
             val current = BedtimeSettings(
                 clientId = prefs[Keys.clientId].orEmpty(),
-                plexToken = prefs[Keys.plexToken].orEmpty(),
-                serverAccessToken = prefs[Keys.serverAccessToken].orEmpty(),
+                plexToken = plex,
+                serverAccessToken = server,
                 plexUsername = prefs[Keys.plexUsername].orEmpty(),
                 serverUrl = prefs[Keys.serverUrl].orEmpty(),
                 serverName = prefs[Keys.serverName].orEmpty(),
@@ -165,12 +203,16 @@ class SettingsRepository(private val context: Context) {
                 cooldownSeconds = prefs[Keys.cooldownSeconds] ?: 25,
                 avaPhotoPath = prefs[Keys.avaPhotoPath].orEmpty(),
                 childName = prefs[Keys.childName] ?: "Ava",
-                discordWebhookUrl = prefs[Keys.discordWebhookUrl].orEmpty()
+                discordWebhookUrl = discord,
+                shufflePlaylist = prefs[Keys.shufflePlaylist] ?: false,
+                autoStartAtBedtime = prefs[Keys.autoStartAtBedtime] ?: false
             )
             val next = transform(current)
+            secrets.writeAll(next.plexToken, next.serverAccessToken, next.discordWebhookUrl)
             prefs[Keys.clientId] = next.clientId
-            prefs[Keys.plexToken] = next.plexToken
-            prefs[Keys.serverAccessToken] = next.serverAccessToken
+            prefs.remove(Keys.plexToken)
+            prefs.remove(Keys.serverAccessToken)
+            prefs.remove(Keys.discordWebhookUrl)
             prefs[Keys.plexUsername] = next.plexUsername
             prefs[Keys.serverUrl] = next.serverUrl
             prefs[Keys.serverName] = next.serverName
@@ -190,7 +232,9 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.cooldownSeconds] = next.cooldownSeconds
             prefs[Keys.avaPhotoPath] = next.avaPhotoPath
             prefs[Keys.childName] = next.childName
-            prefs[Keys.discordWebhookUrl] = next.discordWebhookUrl
+            prefs[Keys.shufflePlaylist] = next.shufflePlaylist
+            prefs[Keys.autoStartAtBedtime] = next.autoStartAtBedtime
+            prefs[Keys.secretsMigrated] = true
         }
     }
 }

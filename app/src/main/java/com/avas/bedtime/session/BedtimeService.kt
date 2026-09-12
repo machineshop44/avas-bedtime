@@ -1,20 +1,28 @@
 package com.avas.bedtime.session
 
+import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.Manifest
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.avas.bedtime.AvaBedtimeApp
 import com.avas.bedtime.MainActivity
 import com.avas.bedtime.R
 import com.avas.bedtime.data.BedtimeSettings
 import com.avas.bedtime.data.EndMode
+import com.avas.bedtime.data.NightSessionStore
 import com.avas.bedtime.data.NightSummary
 import com.avas.bedtime.data.ScheduleTime
 import com.avas.bedtime.detect.StirDetector
@@ -33,6 +41,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,12 +57,14 @@ data class BedtimeSessionState(
 class BedtimeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var player: PlaylistPlayer
+    private lateinit var sessionStore: NightSessionStore
     private var stirDetector: StirDetector? = null
     private var timerJob: Job? = null
     private var loadJob: Job? = null
     private var shutdownJob: Job? = null
     private var endsAtElapsed = 0L
     private var lastNotificationContent: String? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     private var loggingSession = false
     private var sessionStartedAtMs = 0L
@@ -73,7 +84,10 @@ class BedtimeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        player = PlaylistPlayer(this, scope)
+        sessionStore = NightSessionStore(this)
+        player = PlaylistPlayer(this, scope) {
+            _state.value.active
+        }
         player.onTrackChanged = {
             stirDetector?.ignoreAudioChange()
         }
@@ -94,36 +108,56 @@ class BedtimeService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                // Never reset an in-progress bedtime timer if Start is sent again.
                 if (_state.value.active && endsAtElapsed > SystemClock.elapsedRealtime()) {
                     Log.i(TAG, "Start ignored — session already active; timer unchanged")
-                    return START_NOT_STICKY
+                    return START_STICKY
                 }
                 startSession(latestSettings)
             }
             ACTION_STOP -> stopSession(reason = "manual")
             ACTION_RESTART -> restartPlaylistOnly(sourceLabel = null)
             else -> {
-                // Sticky/system restart with no action: satisfy FGS timeout then exit.
-                // Full overnight restore needs persisted session state (not done here).
-                Log.w(TAG, "onStartCommand with no action — promoting FGS then stopping")
-                startForeground(
-                    NOTIFICATION_ID,
-                    buildPlaybackNotification("Stopped")
-                )
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                val snap = sessionStore.load()
+                if (snap != null && snap.stillActive()) {
+                    Log.i(TAG, "Restoring overnight session after process restart")
+                    promoteForeground("Restoring bedtime…")
+                    lastNotificationContent = "Restoring bedtime…"
+                    val remainingMs = snap.endsAtEpochMs - System.currentTimeMillis()
+                    endsAtElapsed = SystemClock.elapsedRealtime() + remainingMs.coerceAtLeast(60_000L)
+                    scope.launch {
+                        val app = applicationContext as? AvaBedtimeApp
+                        val settings = if (app != null) {
+                            app.settingsRepository.settings.first()
+                        } else {
+                            latestSettings
+                        }.let { base ->
+                            // Prefer shuffle flag captured when the night started.
+                            base.copy(shufflePlaylist = snap.shufflePlaylist)
+                        }
+                        applyStirSettings(settings)
+                        startSession(settings, restoreEndsAtElapsed = endsAtElapsed)
+                    }
+                } else {
+                    Log.w(TAG, "onStartCommand with no action — promoting FGS then stopping")
+                    sessionStore.clear()
+                    promoteForeground("Stopped")
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
             }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
-    private fun startSession(settings: BedtimeSettings) {
-        // Invalidate any in-flight Discord shutdown so its finally cannot stopSelf us.
+    private fun startSession(
+        settings: BedtimeSettings,
+        restoreEndsAtElapsed: Long? = null
+    ) {
         lifecycleGeneration++
         shutdownJob?.cancel()
         shutdownJob = null
-        endsAtElapsed = when (settings.resolvedEndMode) {
+        endsAtElapsed = restoreEndsAtElapsed ?: when (settings.resolvedEndMode) {
             EndMode.WakeUp -> ScheduleTime.nextOccurrenceElapsedRealtime(
                 settings.wakeHour,
                 settings.wakeMinute
@@ -141,13 +175,15 @@ class BedtimeService : Service() {
 
         resetNightCounters()
         lastNotificationContent = null
-        startForeground(NOTIFICATION_ID, buildPlaybackNotification("Starting bedtime…"))
+        promoteForeground("Starting bedtime…")
         lastNotificationContent = "Starting bedtime…"
+        acquireWifiLock()
         _state.value = BedtimeSessionState(
             active = true,
             endsAtElapsedRealtime = endsAtElapsed,
             statusMessage = "Getting your music ready…"
         )
+        persistSession(settings)
 
         loadJob?.cancel()
         val loadGen = ++playGeneration
@@ -159,12 +195,22 @@ class BedtimeService : Service() {
                     statusMessage = "Could not reach Plex — playing offline tone"
                 )
                 if (loadGen == playGeneration) {
+                    withContext(Dispatchers.IO) {
+                        // Ensure WAV exists off-main before ExoPlayer opens it.
+                        com.avas.bedtime.player.OfflineDemoTone.ensureFile(this@BedtimeService)
+                    }
                     player.playDemoToneLoop()
                 }
             }
             if (!isActive || loadGen != playGeneration) return@launch
             beginMonitoring(settings)
         }
+    }
+
+    private fun persistSession(settings: BedtimeSettings) {
+        val endsEpoch = System.currentTimeMillis() +
+            max(0L, endsAtElapsed - SystemClock.elapsedRealtime())
+        sessionStore.save(endsEpoch, settings.shufflePlaylist)
     }
 
     private fun resetNightCounters() {
@@ -202,6 +248,7 @@ class BedtimeService : Service() {
                     ).getOrThrow()
                 }
                 if (tracks.isEmpty()) error("Playlist is empty")
+                val ordered = orderTracks(tracks, settings.shufflePlaylist)
                 withContext(Dispatchers.Main) {
                     if (loadGen != playGeneration) return@withContext false
                     player.setTracks(
@@ -209,7 +256,7 @@ class BedtimeService : Service() {
                         settings.serverUrl,
                         settings.pmsToken,
                         clientId,
-                        tracks
+                        ordered
                     )
                     true
                 }
@@ -217,6 +264,17 @@ class BedtimeService : Service() {
                 Log.e(TAG, "Plex playback failed", it)
             }.getOrDefault(false)
         }
+    }
+
+    /** Keep track #1 first (favorite); optionally shuffle the rest. */
+    private fun orderTracks(
+        tracks: List<PlexApi.Track>,
+        shuffle: Boolean
+    ): List<PlexApi.Track> {
+        if (!shuffle || tracks.size <= 1) return tracks
+        val first = tracks.first()
+        val rest = tracks.drop(1).shuffled()
+        return listOf(first) + rest
     }
 
     private fun beginMonitoring(settings: BedtimeSettings) {
@@ -227,7 +285,7 @@ class BedtimeService : Service() {
         detector.updateConfig(
             micSensitivity = settings.micSensitivity,
             motionSensitivity = settings.motionSensitivity,
-            micEnabled = settings.micEnabled,
+            micEnabled = settings.micEnabled && hasMicPermission(),
             motionEnabled = settings.motionEnabled,
             cooldownSeconds = settings.cooldownSeconds
         )
@@ -265,10 +323,9 @@ class BedtimeService : Service() {
                         "Starting over · ${formatRemaining(remaining)} left"
                     else -> "Bedtime · ${formatRemaining(remaining)} left"
                 }
-                // Remaining text only changes each minute — avoid rebuilding every second.
                 if (notifContent != lastNotificationContent) {
                     lastNotificationContent = notifContent
-                    startForeground(NOTIFICATION_ID, buildPlaybackNotification(notifContent))
+                    promoteForeground(notifContent)
                 }
                 if (remaining == 0L) {
                     Log.i(TAG, "Wake/duration timer reached — ending session + night summary")
@@ -281,15 +338,11 @@ class BedtimeService : Service() {
     }
 
     private fun onStir(source: StirSource) {
-        // Mic/motion callbacks arrive off the main thread; ExoPlayer requires main.
         scope.launch {
             restartPlaylistOnly(sourceLabel = source.name)
         }
     }
 
-    /**
-     * Restarts playlist audio only. Does not touch [endsAtElapsed] or the sleep timer.
-     */
     private fun restartPlaylistOnly(sourceLabel: String?) {
         if (!_state.value.active) return
         val timerEnd = endsAtElapsed
@@ -300,7 +353,6 @@ class BedtimeService : Service() {
             StirSource.Motion.name -> motionRestarts++
             else -> manualRestarts++
         }
-        // Mute detection for the restart seek; never shorter than remaining cooldown.
         val muteMs = max(14_000L, stirDetector?.remainingCooldownMs() ?: 0L)
         stirDetector?.ignoreAudioChange(muteMs)
         player.restartFromBeginning()
@@ -313,11 +365,8 @@ class BedtimeService : Service() {
         val left = formatRemaining(max(0L, timerEnd - SystemClock.elapsedRealtime()))
         val notifContent = "Starting over · $left left"
         lastNotificationContent = notifContent
-        startForeground(NOTIFICATION_ID, buildPlaybackNotification(notifContent))
-        Log.i(
-            TAG,
-            "Playlist restarted (mute ${muteMs}ms); timer unchanged ($left left)"
-        )
+        promoteForeground(notifContent)
+        Log.i(TAG, "Playlist restarted (mute ${muteMs}ms); timer unchanged ($left left)")
     }
 
     private fun noteProgress(progress: PlaylistProgress) {
@@ -338,9 +387,6 @@ class BedtimeService : Service() {
         if (stretch > longestQuietMs) longestQuietMs = stretch
     }
 
-    /**
-     * @param reason `"timer"` (wake/duration) or `"manual"` (STOP button / notification).
-     */
     private fun stopSession(reason: String) {
         if (shutdownJob?.isActive == true) {
             Log.i(TAG, "stopSession($reason) ignored — shutdown already in progress")
@@ -357,6 +403,8 @@ class BedtimeService : Service() {
         noteProgress(player.currentProgress())
         closeQuietStretch()
         player.stopAndClear()
+        sessionStore.clear()
+        releaseWifiLock()
 
         val summary = takeNightSummaryOrNull()
         _state.value = BedtimeSessionState(
@@ -371,7 +419,9 @@ class BedtimeService : Service() {
         }
 
         val app = applicationContext as? AvaBedtimeApp
-        app?.nightLogRepository?.add(summary)
+        scope.launch(Dispatchers.IO) {
+            app?.nightLogRepository?.add(summary)
+        }
         postNightSummaryNotification(summary)
         Log.i(TAG, "Night summary ($reason):\n${summary.formatNotificationBody()}")
 
@@ -380,8 +430,6 @@ class BedtimeService : Service() {
         val body = summary.formatNotificationBody()
         val needsDiscord = DiscordWebhookSender.isValidWebhookUrl(webhookUrl)
 
-        // Hold CPU briefly so a 7am timer stop still finishes Discord before the process dies.
-        // Manual STOP used to work because the UI kept the process alive; timer stop did not.
         val wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AvaBedtime:NightSummary")
             .apply {
@@ -389,11 +437,8 @@ class BedtimeService : Service() {
                 acquire(45_000L)
             }
 
-        startForeground(
-            NOTIFICATION_ID,
-            buildPlaybackNotification(
-                if (reason == "timer") "Sending night summary…" else "Stopping…"
-            )
+        promoteForeground(
+            if (reason == "timer") "Sending night summary…" else "Stopping…"
         )
         lastNotificationContent = if (reason == "timer") "Sending night summary…" else "Stopping…"
 
@@ -410,7 +455,6 @@ class BedtimeService : Service() {
                     runCatching {
                         if (wakeLock.isHeld) wakeLock.release()
                     }
-                    // Skip teardown if START began a newer session while we were sending.
                     if (stopGen == lifecycleGeneration && !_state.value.active) {
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf()
@@ -466,6 +510,64 @@ class BedtimeService : Service() {
         }
     }
 
+    private fun hasMicPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun foregroundTypes(): Int {
+        val wantMic = latestSettings.micEnabled && hasMicPermission()
+        return if (wantMic) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        } else {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        }
+    }
+
+    private fun promoteForeground(content: String) {
+        val notification = buildPlaybackNotification(content)
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(NOTIFICATION_ID, notification, foregroundTypes())
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            if (Build.VERSION.SDK_INT >= 31 && e is ForegroundServiceStartNotAllowedException) {
+                Log.e(TAG, "FGS start not allowed", e)
+            } else {
+                Log.e(TAG, "startForeground failed — retrying media-only", e)
+                runCatching {
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        startForeground(
+                            NOTIFICATION_ID,
+                            notification,
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                        )
+                    } else {
+                        startForeground(NOTIFICATION_ID, notification)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun acquireWifiLock() {
+        releaseWifiLock()
+        val wm = applicationContext.getSystemService(WIFI_SERVICE) as? WifiManager ?: return
+        wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "AvaBedtime:Stream").apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseWifiLock() {
+        runCatching {
+            wifiLock?.takeIf { it.isHeld }?.release()
+        }
+        wifiLock = null
+    }
+
     private fun buildPlaybackNotification(content: String): Notification {
         val open = PendingIntent.getActivity(
             this,
@@ -491,8 +593,6 @@ class BedtimeService : Service() {
             setOnClickPendingIntent(R.id.notif_btn_restart, restart)
             setOnClickPendingIntent(R.id.notif_btn_stop, stop)
         }
-        // Lock screen: title-only public version (no buttons — kids shouldn't see transport).
-        // Unlocked shade: big custom Restart / Stop.
         val lockSafe = NotificationCompat.Builder(this, AvaBedtimeApp.NOTIFICATION_CHANNEL_ID)
             .setContentTitle(getString(R.string.notification_title))
             .setContentText(content)
@@ -520,6 +620,7 @@ class BedtimeService : Service() {
         timerJob?.cancel()
         shutdownJob?.cancel()
         stirDetector?.stop()
+        releaseWifiLock()
         player.release()
         scope.cancel()
         if (instance === this) instance = null
@@ -546,13 +647,13 @@ class BedtimeService : Service() {
         @Volatile
         var latestSettings: BedtimeSettings = BedtimeSettings()
 
-        /** Push sensitivity / mic-motion toggles into the live detector. */
         fun applyStirSettings(settings: BedtimeSettings) {
             latestSettings = settings
-            instance?.stirDetector?.updateConfig(
+            val svc = instance ?: return
+            svc.stirDetector?.updateConfig(
                 micSensitivity = settings.micSensitivity,
                 motionSensitivity = settings.motionSensitivity,
-                micEnabled = settings.micEnabled,
+                micEnabled = settings.micEnabled && svc.hasMicPermission(),
                 motionEnabled = settings.motionEnabled,
                 cooldownSeconds = settings.cooldownSeconds
             )

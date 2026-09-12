@@ -5,7 +5,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import com.avas.bedtime.data.NightLogRepository
 import com.avas.bedtime.data.SettingsRepository
+import com.avas.bedtime.player.OfflineDemoTone
 import com.avas.bedtime.plex.PlexSignInCoordinator
+import kotlin.concurrent.thread
 
 class AvaBedtimeApp : Application() {
     lateinit var settingsRepository: SettingsRepository
@@ -21,25 +23,28 @@ class AvaBedtimeApp : Application() {
         nightLogRepository = NightLogRepository(this)
         plexSignIn = PlexSignInCoordinator(settingsRepository)
         createNotificationChannels()
+        thread(name = "OfflineTonePrefetch", isDaemon = true) {
+            runCatching { OfflineDemoTone.ensureFile(this) }
+        }
     }
 
     private fun createNotificationChannels() {
         val manager = getSystemService(NotificationManager::class.java)
-        // New id so lock-screen visibility / importance actually apply (Android won't
-        // fully update those on an already-created channel).
+        // New id so importance change applies (Android won't fully update an existing channel).
         manager.createNotificationChannel(
             NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
                 getString(R.string.notification_channel_name),
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = getString(R.string.notification_channel_desc)
                 lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
                 setShowBadge(false)
+                setSound(null, null)
             }
         )
-        // Remove legacy low-importance channel if present.
         runCatching { manager.deleteNotificationChannel("bedtime_playback") }
+        runCatching { manager.deleteNotificationChannel("bedtime_playback_v2") }
         manager.createNotificationChannel(
             NotificationChannel(
                 NIGHT_SUMMARY_CHANNEL_ID,
@@ -52,7 +57,8 @@ class AvaBedtimeApp : Application() {
     }
 
     companion object {
-        const val NOTIFICATION_CHANNEL_ID = "bedtime_playback_v2"
+        // v3 = LOW importance quiet overnight channel
+        const val NOTIFICATION_CHANNEL_ID = "bedtime_playback_v3"
         const val NIGHT_SUMMARY_CHANNEL_ID = "night_summary"
     }
 }

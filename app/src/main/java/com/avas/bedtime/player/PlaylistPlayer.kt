@@ -21,10 +21,14 @@ import com.avas.bedtime.plex.PlexHeaders
 import com.avas.bedtime.plex.PlexTimelineReporter
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class PlaylistPlayer(
     context: Context,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val shouldAutoResume: () -> Boolean = { false }
 ) {
     private val appContext = context.applicationContext
     private val artworkPng: ByteArray by lazy { loadArtworkPng(appContext) }
@@ -37,6 +41,7 @@ class PlaylistPlayer(
 
     private val player = ExoPlayer.Builder(appContext)
         .setMediaSourceFactory(DefaultMediaSourceFactory(httpDataSourceFactory))
+        .setHandleAudioBecomingNoisy(true)
         .build()
         .apply {
             repeatMode = Player.REPEAT_MODE_ALL
@@ -53,11 +58,10 @@ class PlaylistPlayer(
     private var tracks: List<PlexApi.Track> = emptyList()
     private var timeline: PlexTimelineReporter? = null
     private var usingLocalDemo = false
+    private var recoverySkips = 0
+    private var resumeJob: Job? = null
 
-    /** Fired when ExoPlayer advances/seeks to another playlist item. */
     var onTrackChanged: (() -> Unit)? = null
-
-    /** Fired when playback fails mid-night (network/Plex). UI may show status. */
     var onPlaybackError: ((String) -> Unit)? = null
 
     val isPlaying: Boolean
@@ -90,6 +94,18 @@ class PlaylistPlayer(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 val reporter = timeline ?: return
                 if (isPlaying) reporter.onPlaying() else reporter.onPaused()
+                if (!isPlaying && shouldAutoResume()) {
+                    resumeJob?.cancel()
+                    resumeJob = scope.launch {
+                        delay(1_500L)
+                        if (shouldAutoResume() && !player.isPlaying && player.mediaItemCount > 0) {
+                            Log.i(TAG, "Auto-resuming after focus/noisy pause")
+                            player.play()
+                        }
+                    }
+                } else if (isPlaying) {
+                    resumeJob?.cancel()
+                }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -123,6 +139,7 @@ class PlaylistPlayer(
     ) {
         this.tracks = tracks
         usingLocalDemo = false
+        recoverySkips = 0
         httpDataSourceFactory.setDefaultRequestProperties(
             mapOf(
                 "X-Plex-Token" to token,
@@ -158,12 +175,12 @@ class PlaylistPlayer(
         Log.i(TAG, "Playing ${tracks.size} Plex tracks (timeline reporting on)")
     }
 
-    /** Soft local WAV loop — works with zero network (Hershey / airplane mode). */
     fun playDemoToneLoop() {
         timeline?.onStopped()
         timeline = null
         tracks = emptyList()
         usingLocalDemo = true
+        recoverySkips = 0
         val demo = OfflineDemoTone.file(appContext)
         val item = MediaItem.Builder()
             .setUri(Uri.fromFile(demo))
@@ -185,12 +202,13 @@ class PlaylistPlayer(
         player.pause()
     }
 
-    /** Hard stop so a cancelled load cannot resume audio after STOP. */
     fun stopAndClear() {
+        resumeJob?.cancel()
         timeline?.onStopped()
         timeline = null
         tracks = emptyList()
         usingLocalDemo = false
+        recoverySkips = 0
         runCatching {
             player.pause()
             player.stop()
@@ -212,6 +230,7 @@ class PlaylistPlayer(
     fun currentDurationMs(): Long = player.duration.coerceAtLeast(0L)
 
     fun release() {
+        resumeJob?.cancel()
         timeline?.onStopped()
         timeline = null
         player.release()
@@ -223,10 +242,12 @@ class PlaylistPlayer(
             return
         }
         val count = player.mediaItemCount
-        if (count <= 0) {
+        if (count <= 0 || recoverySkips >= MAX_RECOVERY_SKIPS) {
+            Log.w(TAG, "Recovery cap reached ($recoverySkips) — offline demo")
             playDemoToneLoop()
             return
         }
+        recoverySkips++
         val next = (player.currentMediaItemIndex + 1) % count
         runCatching {
             player.seekTo(next, 0L)
@@ -234,7 +255,7 @@ class PlaylistPlayer(
             player.play()
             bindCurrentTrackToTimeline()
             timeline?.onSeekOrTrackChange()
-            Log.i(TAG, "Recovered by skipping to index $next")
+            Log.i(TAG, "Recovered by skipping to index $next (skip #$recoverySkips)")
         }.onFailure {
             Log.e(TAG, "Skip recovery failed — falling back to offline demo", it)
             playDemoToneLoop()
@@ -267,6 +288,7 @@ class PlaylistPlayer(
 
     companion object {
         private const val TAG = "PlaylistPlayer"
+        private const val MAX_RECOVERY_SKIPS = 8
 
         private fun loadArtworkPng(context: Context): ByteArray {
             val size = (128 * context.resources.displayMetrics.density).toInt().coerceAtLeast(128)

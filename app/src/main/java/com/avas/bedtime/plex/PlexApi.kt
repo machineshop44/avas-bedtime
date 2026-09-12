@@ -116,7 +116,7 @@ class PlexApi(
                 .build()
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@runCatching null
-                val json = JSONObject(response.body!!.string())
+                val json = JSONObject(response.body?.string() ?: error("Empty Plex response"))
                 val token = json.optString("authToken", "")
                 if (token.isNotBlank() && token != "null") token else null
             }
@@ -146,7 +146,7 @@ class PlexApi(
                 .build()
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) error("Could not load Plex user (${response.code})")
-                val json = JSONObject(response.body!!.string())
+                val json = JSONObject(response.body?.string() ?: error("Empty Plex response"))
                 UserProfile(
                     username = json.optString("username").ifBlank {
                         json.optString("title").ifBlank { "Plex account" }
@@ -166,7 +166,7 @@ class PlexApi(
                 .build()
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) error("Could not list servers (${response.code})")
-                val array = JSONArray(response.body!!.string())
+                val array = JSONArray(response.body?.string() ?: error("Empty Plex response"))
                 buildList {
                     for (i in 0 until array.length()) {
                         val item = array.getJSONObject(i)
@@ -233,8 +233,8 @@ class PlexApi(
                 if (audio.isNotEmpty()) return@runCatching audio
                 fetchPlaylists(serverUrl, token, "/playlists/all")
                     .filter { playlist ->
-                        // Keep likely music/audiobook lists; drop video playlists when possible.
-                        true
+                        val t = playlist.title.lowercase()
+                        !t.contains("movie") && !t.contains("tv ") && !t.contains("video")
                     }
             }
         }
@@ -344,7 +344,17 @@ class PlexApi(
                         .header("X-Plex-Client-Identifier", clientId)
                         .build()
                     probeClient.newCall(request).execute().use { response ->
-                        response.isSuccessful || response.code == 401 || response.code == 403
+                        when {
+                            response.isSuccessful -> true
+                            response.code == 401 || response.code == 403 -> {
+                                errors += "${conn.label} ($base): unauthorized (${response.code})"
+                                false
+                            }
+                            else -> {
+                                errors += "${conn.label} ($base): HTTP ${response.code}"
+                                false
+                            }
+                        }
                     }
                 }.onFailure {
                     errors += "${conn.label} ($base): ${it.message}"
@@ -376,8 +386,11 @@ class PlexApi(
                     .header("X-Plex-Client-Identifier", clientId)
                     .build()
                 probeClient.newCall(request).execute().use { response ->
-                    if (!(response.isSuccessful || response.code == 401 || response.code == 403)) {
-                        error("Server returned ${response.code}")
+                    when {
+                        response.isSuccessful -> Unit
+                        response.code == 401 || response.code == 403 ->
+                            error("Plex rejected the token (${response.code}). Sign in again.")
+                        else -> error("Server returned ${response.code}")
                     }
                 }
             }
@@ -428,7 +441,7 @@ class PlexApi(
             if (!response.isSuccessful) {
                 error("Plex server error ${response.code} for $path")
             }
-            return JSONObject(response.body!!.string())
+            return JSONObject(response.body?.string() ?: error("Empty Plex response"))
         }
     }
 

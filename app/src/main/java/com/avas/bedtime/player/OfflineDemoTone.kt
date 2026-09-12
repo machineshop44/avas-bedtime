@@ -22,6 +22,9 @@ object OfflineDemoTone {
         return out
     }
 
+    /** Prefetch on a background thread so the first fail path never synthesizes on Main. */
+    fun ensureFile(context: Context): File = file(context.applicationContext)
+
     private fun writeSoftLoop(file: File) {
         val totalSamples = SAMPLE_RATE * DURATION_SEC
         val dataBytes = totalSamples * 2

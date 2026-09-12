@@ -141,7 +141,11 @@ fun CircularPhotoCropOverlay(
             ) { Text("Cancel") }
             OutlinedButton(
                 onClick = {
-                    workingBitmap = com.avas.bedtime.data.AvaPhotoStore.rotate90Clockwise(workingBitmap)
+                    val previous = workingBitmap
+                    workingBitmap = com.avas.bedtime.data.AvaPhotoStore.rotate90Clockwise(previous)
+                    if (previous !== source && previous !== workingBitmap) {
+                        runCatching { previous.recycle() }
+                    }
                     scale = 1f
                     offset = Offset.Zero
                 },

@@ -3,6 +3,7 @@ package com.avas.bedtime.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.SystemClock
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -207,14 +208,20 @@ fun KidHomeScreen(
     }
 
     fun neededPermissions(): Array<String> {
-        // Mic is required for stir detection. Notifications are optional — FGS still runs.
-        return arrayOf(Manifest.permission.RECORD_AUDIO)
+        val perms = mutableListOf<String>()
+        if (settings.micEnabled) {
+            perms += Manifest.permission.RECORD_AUDIO
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            perms += Manifest.permission.POST_NOTIFICATIONS
+        }
+        return perms.toTypedArray()
     }
 
     fun hasPermissions(): Boolean =
         neededPermissions().all {
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-        }
+        } || neededPermissions().isEmpty()
 
     var tick by remember { mutableLongStateOf(0L) }
     LaunchedEffect(session.active) {

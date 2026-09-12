@@ -14,6 +14,7 @@ object DiscordWebhookSender {
         .connectTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
         .build()
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
     private val asyncExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
@@ -64,7 +65,7 @@ object DiscordWebhookSender {
             .header("User-Agent", "AvaBedtime")
             .build()
 
-        repeat(3) { attempt ->
+        repeat(2) { attempt ->
             val ok = runCatching {
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
@@ -79,7 +80,7 @@ object DiscordWebhookSender {
                 Log.e(TAG, "Discord webhook failed (attempt ${attempt + 1})", it)
             }.getOrDefault(false)
             if (ok) return true
-            if (attempt < 2) Thread.sleep(1_500L * (attempt + 1))
+            if (attempt < 1) Thread.sleep(1_500L * (attempt + 1))
         }
         return false
     }

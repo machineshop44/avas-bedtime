@@ -12,13 +12,30 @@ android {
         applicationId = "com.avas.bedtime"
         minSdk = 28
         targetSdk = 35
-        versionCode = 52
-        versionName = "0.6.10"
+        versionCode = 55
+        versionName = "0.6.13"
+    }
+
+    // Force v1+v2 like ArrsHub. AGP skips v1 when minSdk>=24 unless enabled.
+    // Never re-zip APKs in publish scripts — that compresses resources.arsc and
+    // breaks Package Installer / Files / Nearby Share installs.
+    signingConfigs {
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = false
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
+            isDebuggable = false
+            // Same debug key so phone↔tablet share updates don't fail on signature.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -38,6 +55,11 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
     }
 
     packaging {

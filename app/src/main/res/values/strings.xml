@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Ava Bedtime</string>
     <string name="notification_channel_name">Bedtime playback</string>
-    <string name="notification_channel_desc">Shows Restart and Stop while bedtime music is playing (including on the lock screen)</string>
+    <string name="notification_channel_desc">Quiet status while bedtime music is playing. Restart and Stop appear in the notification shade (not on the lock screen).</string>
     <string name="notification_title">Bedtime playing</string>
     <string name="notification_action_restart">Restart</string>
     <string name="notification_action_stop">Stop</string>

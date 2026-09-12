@@ -34,10 +34,12 @@ fun BedtimeApp() {
         if (settings.clientId.isBlank()) {
             app.settingsRepository.ensureClientId()
         }
+        com.avas.bedtime.session.BedtimeScheduler.reschedule(context, settings)
     }
 
     LaunchedEffect(Unit) {
         app.settingsRepository.migrateDetectionDefaultsIfNeeded()
+        app.settingsRepository.migrateSecretsIfNeeded()
     }
 
     BackHandler(enabled = screen == Screen.Settings) {
