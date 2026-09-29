@@ -42,7 +42,13 @@ data class BedtimeSettings(
     /** Shuffle after track #1 (favorite always plays first). */
     val shufflePlaylist: Boolean = false,
     /** Fire an alarm at bedtimeHour/Minute to auto-start. */
-    val autoStartAtBedtime: Boolean = false
+    val autoStartAtBedtime: Boolean = false,
+    /** Picture icons on START / RESTART / STOP for pre-readers. */
+    val buttonIcons: Boolean = true,
+    /** Moon-to-sun path showing how much of the night is left. */
+    val nightProgressArc: Boolean = true,
+    /** Swap bright themes (Unicorn, Rainbow) for dusky versions while music plays. */
+    val dimThemeAtNight: Boolean = true
 ) {
     val isPlexSignedIn: Boolean get() = plexToken.isNotBlank()
     val pmsToken: String get() = serverAccessToken.ifBlank { plexToken }
@@ -92,6 +98,9 @@ class SettingsRepository(private val context: Context) {
         val secretsMigrated = booleanPreferencesKey("secrets_migrated_v1")
         val shufflePlaylist = booleanPreferencesKey("shuffle_playlist")
         val autoStartAtBedtime = booleanPreferencesKey("auto_start_at_bedtime")
+        val buttonIcons = booleanPreferencesKey("button_icons")
+        val nightProgressArc = booleanPreferencesKey("night_progress_arc")
+        val dimThemeAtNight = booleanPreferencesKey("dim_theme_at_night")
     }
 
     val settings: Flow<BedtimeSettings> = context.dataStore.data.map { prefs ->
@@ -123,7 +132,10 @@ class SettingsRepository(private val context: Context) {
             childName = prefs[Keys.childName] ?: "Ava",
             discordWebhookUrl = discord,
             shufflePlaylist = prefs[Keys.shufflePlaylist] ?: false,
-            autoStartAtBedtime = prefs[Keys.autoStartAtBedtime] ?: false
+            autoStartAtBedtime = prefs[Keys.autoStartAtBedtime] ?: false,
+            buttonIcons = prefs[Keys.buttonIcons] ?: true,
+            nightProgressArc = prefs[Keys.nightProgressArc] ?: true,
+            dimThemeAtNight = prefs[Keys.dimThemeAtNight] ?: true
         )
     }
 
@@ -205,7 +217,10 @@ class SettingsRepository(private val context: Context) {
                 childName = prefs[Keys.childName] ?: "Ava",
                 discordWebhookUrl = discord,
                 shufflePlaylist = prefs[Keys.shufflePlaylist] ?: false,
-                autoStartAtBedtime = prefs[Keys.autoStartAtBedtime] ?: false
+                autoStartAtBedtime = prefs[Keys.autoStartAtBedtime] ?: false,
+                buttonIcons = prefs[Keys.buttonIcons] ?: true,
+                nightProgressArc = prefs[Keys.nightProgressArc] ?: true,
+                dimThemeAtNight = prefs[Keys.dimThemeAtNight] ?: true
             )
             val next = transform(current)
             secrets.writeAll(next.plexToken, next.serverAccessToken, next.discordWebhookUrl)
@@ -234,6 +249,9 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.childName] = next.childName
             prefs[Keys.shufflePlaylist] = next.shufflePlaylist
             prefs[Keys.autoStartAtBedtime] = next.autoStartAtBedtime
+            prefs[Keys.buttonIcons] = next.buttonIcons
+            prefs[Keys.nightProgressArc] = next.nightProgressArc
+            prefs[Keys.dimThemeAtNight] = next.dimThemeAtNight
             prefs[Keys.secretsMigrated] = true
         }
     }

@@ -612,6 +612,27 @@ fun SettingsScreen(
                 }
             }
         )
+        ToggleRow("Picture icons on buttons", settings.buttonIcons) { enabled ->
+            scope.launch { repository.update { it.copy(buttonIcons = enabled) } }
+        }
+        Text(
+            "Moon, circle-arrow and square icons so START, RESTART and STOP work without reading.",
+            style = SettingsTextStyles.hint
+        )
+        ToggleRow("Moon-to-sun night path", settings.nightProgressArc) { enabled ->
+            scope.launch { repository.update { it.copy(nightProgressArc = enabled) } }
+        }
+        Text(
+            "A little star travels from the moon to the sun as morning gets closer.",
+            style = SettingsTextStyles.hint
+        )
+        ToggleRow("Dusky colors while music plays", settings.dimThemeAtNight) { enabled ->
+            scope.launch { repository.update { it.copy(dimThemeAtNight = enabled) } }
+        }
+        Text(
+            "Unicorn and Rainbow switch to darker, warmer colors during bedtime.",
+            style = SettingsTextStyles.hint
+        )
 
         SectionTitle("Bedtime & wake-up")
         SettingsDropdown(

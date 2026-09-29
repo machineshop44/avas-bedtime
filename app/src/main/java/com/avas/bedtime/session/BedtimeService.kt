@@ -48,6 +48,8 @@ data class BedtimeSessionState(
     val active: Boolean = false,
     val trackTitle: String = "",
     val endsAtElapsedRealtime: Long = 0L,
+    /** When tonight began (earlier if a paused night was resumed). */
+    val nightStartedAtElapsedRealtime: Long = 0L,
     val lastStirSource: String? = null,
     val statusMessage: String = "Idle"
 )
@@ -196,6 +198,8 @@ class BedtimeService : Service() {
         _state.value = BedtimeSessionState(
             active = true,
             endsAtElapsedRealtime = endsAtElapsed,
+            nightStartedAtElapsedRealtime = SystemClock.elapsedRealtime() -
+                (System.currentTimeMillis() - sessionStartedAtMs).coerceAtLeast(0L),
             statusMessage = "Getting your music ready…"
         )
         persistSession(settings)

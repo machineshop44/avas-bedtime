@@ -34,6 +34,41 @@ data class BedtimeThemeColors(
     val shadowTint: Color
 )
 
+/** Night-safe version of the pastel themes; dark themes are returned unchanged. */
+fun BedtimeThemeColors.dusky(): BedtimeThemeColors = when (id) {
+    AppThemeId.Unicorn -> copy(
+        background = Brush.verticalGradient(
+            listOf(Color(0xFF1E1226), Color(0xFF2A1830), Color(0xFF3A2440), Color(0xFF221428))
+        ),
+        title = Color(0xFFF6DDEA),
+        subtitle = Color(0xFFD99AC0),
+        body = Color(0xFFE2CFE0),
+        startButton = Color(0xFFB85C8E),
+        stopButton = Color(0xFFA85A62),
+        settingsBar = Color(0xD9281A30),
+        settingsText = Color(0xFFE2CFE0),
+        accentChip = Color(0xFF3E2446),
+        photoRing = Color(0x55F6DDEA),
+        shadowTint = Color(0xAA000000)
+    )
+    AppThemeId.Rainbow -> copy(
+        background = Brush.verticalGradient(
+            listOf(Color(0xFF1A1428), Color(0xFF2A1A30), Color(0xFF30222A), Color(0xFF1C1A2A))
+        ),
+        title = Color(0xFFF6E8D8),
+        subtitle = Color(0xFFD8B070),
+        body = Color(0xFFE2D6CC),
+        startButton = Color(0xFF4E8AA0),
+        stopButton = Color(0xFFB0645A),
+        settingsBar = Color(0xD9261C30),
+        settingsText = Color(0xFFE2D6CC),
+        accentChip = Color(0xFF3A2A38),
+        photoRing = Color(0x55F6E8D8),
+        shadowTint = Color(0xAA000000)
+    )
+    else -> this
+}
+
 fun themeColors(id: AppThemeId): BedtimeThemeColors = when (id) {
     AppThemeId.Night -> BedtimeThemeColors(
         id = id,

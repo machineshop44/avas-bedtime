@@ -101,10 +101,11 @@ fun ThemePasserby(
         }
     }
 
-    LaunchedEffect(colors.id) {
+    LaunchedEffect(colors.id, calm) {
         active = false
         flying = false
         flyUsesRawX = false
+        if (calm) return@LaunchedEffect
         delay(Random.nextLong(2_500L, 6_000L))
         while (true) {
             // Idle passes always trot — flying is tap-only.

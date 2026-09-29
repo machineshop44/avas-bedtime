@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -67,6 +69,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -82,6 +85,7 @@ import com.avas.bedtime.data.BedtimeSettings
 import com.avas.bedtime.session.BedtimeService
 import com.avas.bedtime.ui.theme.AppThemeId
 import com.avas.bedtime.ui.theme.BedtimeThemeColors
+import com.avas.bedtime.ui.theme.dusky
 import com.avas.bedtime.ui.theme.themeColors
 import kotlin.math.max
 import kotlinx.coroutines.delay
@@ -214,7 +218,8 @@ fun KidHomeScreen(
 ) {
     val context = LocalContext.current
     val session by BedtimeService.state.collectAsStateWithLifecycle()
-    val colors = themeColors(AppThemeId.fromStorage(settings.themeId))
+    val baseColors = themeColors(AppThemeId.fromStorage(settings.themeId))
+    val colors = if (session.active && settings.dimThemeAtNight) baseColors.dusky() else baseColors
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -294,13 +299,8 @@ fun KidHomeScreen(
         animationSpec = tween(900),
         label = "pulse"
     )
-    val sparkle = rememberInfiniteTransition(label = "sparkle")
-    val sparkleScale by sparkle.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.03f,
-        animationSpec = infiniteRepeatable(tween(1600), RepeatMode.Reverse),
-        label = "sparkleScale"
-    )
+    // Only breathe START while idle; nothing should keep animating overnight.
+    val sparkleScale = if (!session.active && ready) rememberSparkleScale() else 1f
 
     BoxWithConstraints(
         modifier = Modifier
@@ -318,7 +318,7 @@ fun KidHomeScreen(
                 }
             }
     ) {
-        SoftAtmosphere(colors = colors)
+        SoftAtmosphere(colors = colors, calm = calm)
         val metrics = rememberHomeMetrics(maxHeight, maxWidth, sessionActive = session.active)
 
         Column(
@@ -467,9 +467,21 @@ fun KidHomeScreen(
                 },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                val startingOver = session.active && session.statusMessage == "Starting over"
+                // Fades in once whenever the icon changes; never loops.
+                val statusIconAlpha = remember(startingOver) { Animatable(0f) }
+                LaunchedEffect(startingOver) { statusIconAlpha.animateTo(1f, tween(600)) }
+                if (settings.buttonIcons && session.active) {
+                    KidIconView(
+                        icon = if (startingOver) KidIcon.Restart else KidIcon.Note,
+                        color = colors.subtitle.copy(alpha = 0.85f * statusIconAlpha.value),
+                        size = (metrics.statusSp * 2.2f).dp,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
                 Text(
                     text = when {
-                        session.active && session.statusMessage == "Starting over" ->
+                        startingOver ->
                             "Heard a stir — starting over"
                         session.active -> "Sleepy music is on"
                         !ready -> "Grown-ups: tap the gear to pick music"
@@ -499,7 +511,27 @@ fun KidHomeScreen(
                 } else {
                     Spacer(Modifier.height(metrics.gapBeforeButton))
                 }
-                if (session.active) {
+                if (session.active && settings.nightProgressArc) {
+                    val nowElapsed = SystemClock.elapsedRealtime().coerceAtLeast(tick)
+                    val nightLength = session.endsAtElapsedRealtime - session.nightStartedAtElapsedRealtime
+                    val nightProgress = if (nightLength > 0L && session.nightStartedAtElapsedRealtime > 0L) {
+                        (nowElapsed - session.nightStartedAtElapsedRealtime).toFloat() / nightLength
+                    } else {
+                        0f
+                    }
+                    NightPathArc(
+                        progress = nightProgress,
+                        colors = colors,
+                        widthFraction = 0.72f,
+                        modifier = Modifier.widthIn(max = metrics.buttonSize * 1.5f)
+                    )
+                    Text(
+                        text = BedtimeService.formatRemaining(remaining),
+                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                        color = colors.subtitle,
+                        modifier = Modifier.padding(bottom = metrics.gapBeforeButton)
+                    )
+                } else if (session.active) {
                     Text(
                         text = BedtimeService.formatRemaining(remaining),
                         style = MaterialTheme.typography.headlineLarge.copy(
@@ -525,6 +557,7 @@ fun KidHomeScreen(
                         }
                         BigRoundButton(
                             label = "RESTART",
+                            icon = if (settings.buttonIcons) KidIcon.Restart else null,
                             color = colors.startButton,
                             textColor = colors.buttonText,
                             shadowTint = colors.shadowTint,
@@ -544,10 +577,10 @@ fun KidHomeScreen(
                             }
                         )
                     }
-                    // Wide gap: RESTART's touch area is its full square, not just the circle.
                     Spacer(Modifier.height(28.dp))
                     GlossyPillButton(
                         label = if (showHoldHint) "HOLD TO STOP" else "STOP",
+                        icon = if (settings.buttonIcons) KidIcon.Stop else null,
                         color = colors.stopButton,
                         textColor = colors.buttonText,
                         shadowTint = colors.shadowTint,
@@ -583,6 +616,7 @@ fun KidHomeScreen(
                 } else {
                     BigRoundButton(
                         label = "START",
+                        icon = if (settings.buttonIcons) KidIcon.Moon else null,
                         color = if (ready) colors.startButton else colors.startButtonDisabled,
                         textColor = colors.buttonText,
                         shadowTint = colors.shadowTint,
@@ -624,29 +658,19 @@ fun KidHomeScreen(
 }
 
 @Composable
-private fun SoftAtmosphere(colors: BedtimeThemeColors) {
-    val twinkle = rememberInfiniteTransition(label = "twinkle")
-    val phase by twinkle.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(7000), RepeatMode.Restart),
-        label = "phase"
+private fun rememberSparkleScale(): Float {
+    val sparkle = rememberInfiniteTransition(label = "sparkle")
+    val scale by sparkle.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.03f,
+        animationSpec = infiniteRepeatable(tween(1600), RepeatMode.Reverse),
+        label = "sparkleScale"
     )
-    val sparkles = remember {
-        List(28) { i ->
-            val rng = Random(i * 97 + 13)
-            Sparkle(
-                xFrac = rng.nextFloat(),
-                yFrac = rng.nextFloat() * 0.72f,
-                radius = 1.5f + rng.nextFloat() * 2.8f,
-                speed = 0.6f + rng.nextFloat() * 1.4f,
-                offset = rng.nextFloat() * 6f
-            )
-        }
-    }
-    val density = LocalDensity.current
+    return scale
+}
 
-    // Soft cloud orbs
+@Composable
+private fun SoftAtmosphere(colors: BedtimeThemeColors, calm: Boolean) {
     Box(modifier = Modifier.fillMaxSize()) {
         SoftOrb(
             modifier = Modifier
@@ -677,21 +701,9 @@ private fun SoftAtmosphere(colors: BedtimeThemeColors) {
             color = colors.subtitle.copy(alpha = 0.18f)
         )
     }
+    // Hidden under the calm scrim anyway; skipping it stops the per-frame redraws.
+    if (!calm) TwinklingStars()
 
-    // Twinkling stars
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        sparkles.forEach { s ->
-            val alpha = (0.15f + 0.55f * ((sin((phase * s.speed) + s.offset) + 1f) / 2f))
-                .coerceIn(0.08f, 0.75f)
-            drawCircle(
-                color = Color.White.copy(alpha = alpha),
-                radius = with(density) { s.radius.dp.toPx() },
-                center = Offset(size.width * s.xFrac, size.height * s.yFrac)
-            )
-        }
-    }
-
-    // Gentle vignette
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -703,6 +715,41 @@ private fun SoftAtmosphere(colors: BedtimeThemeColors) {
                 )
             )
     )
+}
+
+@Composable
+private fun TwinklingStars() {
+    val twinkle = rememberInfiniteTransition(label = "twinkle")
+    val phase by twinkle.animateFloat(
+        initialValue = 0f,
+        targetValue = (2f * PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(7000), RepeatMode.Restart),
+        label = "phase"
+    )
+    val sparkles = remember {
+        List(28) { i ->
+            val rng = Random(i * 97 + 13)
+            Sparkle(
+                xFrac = rng.nextFloat(),
+                yFrac = rng.nextFloat() * 0.72f,
+                radius = 1.5f + rng.nextFloat() * 2.8f,
+                speed = 0.6f + rng.nextFloat() * 1.4f,
+                offset = rng.nextFloat() * 6f
+            )
+        }
+    }
+    val density = LocalDensity.current
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        sparkles.forEach { s ->
+            val alpha = (0.15f + 0.55f * ((sin((phase * s.speed) + s.offset) + 1f) / 2f))
+                .coerceIn(0.08f, 0.75f)
+            drawCircle(
+                color = Color.White.copy(alpha = alpha),
+                radius = with(density) { s.radius.dp.toPx() },
+                center = Offset(size.width * s.xFrac, size.height * s.yFrac)
+            )
+        }
+    }
 }
 
 @Composable
@@ -727,6 +774,7 @@ private data class Sparkle(
 @Composable
 private fun BigRoundButton(
     label: String,
+    icon: KidIcon? = null,
     color: Color,
     textColor: Color,
     shadowTint: Color,
@@ -744,6 +792,7 @@ private fun BigRoundButton(
         alpha = color.alpha
     )
     val rimLight = Color.White.copy(alpha = 0.38f)
+    val currentOnClick by rememberUpdatedState(onClick)
     Box(
         modifier = Modifier
             .scale(scale)
@@ -764,11 +813,19 @@ private fun BigRoundButton(
                 )
             )
             .border(width = 2.5.dp, color = rimLight, shape = CircleShape)
-            .combinedClickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            ),
+            .semantics {
+                contentDescription = label
+                onClick(label = label) { currentOnClick(); true }
+            }
+            // clip() doesn't shrink the touch area, so ignore taps in the square's corners.
+            .pointerInput(Unit) {
+                detectTapGestures { tap ->
+                    val r = this.size.width / 2f
+                    val dx = tap.x - r
+                    val dy = tap.y - this.size.height / 2f
+                    if (dx * dx + dy * dy <= r * r) currentOnClick()
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -807,17 +864,22 @@ private fun BigRoundButton(
                 style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
             )
         }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.headlineLarge.copy(
-                fontSize = labelSp.sp,
-                letterSpacing = 0.8.sp
-            ),
-            color = textColor,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (icon != null) {
+                KidIconView(icon = icon, color = textColor, size = size * 0.42f)
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    fontSize = (if (icon != null) labelSp * 0.55f else labelSp).sp,
+                    letterSpacing = 0.8.sp
+                ),
+                color = textColor,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -826,6 +888,7 @@ private fun BigRoundButton(
 @Composable
 private fun GlossyPillButton(
     label: String,
+    icon: KidIcon? = null,
     color: Color,
     textColor: Color,
     shadowTint: Color,
@@ -917,17 +980,23 @@ private fun GlossyPillButton(
                 style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
             )
         }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleLarge.copy(
-                fontSize = labelSp.sp,
-                letterSpacing = 0.8.sp
-            ),
-            color = textColor,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (icon != null) {
+                KidIconView(icon = icon, color = textColor, size = height * 0.5f)
+                Spacer(Modifier.width(10.dp))
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontSize = labelSp.sp,
+                    letterSpacing = 0.8.sp
+                ),
+                color = textColor,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
