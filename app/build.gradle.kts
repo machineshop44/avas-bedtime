@@ -12,8 +12,8 @@ android {
         applicationId = "com.avas.bedtime"
         minSdk = 28
         targetSdk = 35
-        versionCode = 58
-        versionName = "0.6.16"
+        versionCode = 59
+        versionName = "0.6.17"
     }
 
     // Force v1+v2 like ArrsHub. AGP skips v1 when minSdk>=24 unless enabled.

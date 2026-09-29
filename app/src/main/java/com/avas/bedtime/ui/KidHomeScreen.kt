@@ -590,7 +590,10 @@ fun KidHomeScreen(
                         fillFraction = holdProgress.value,
                         gestureModifier = Modifier.pointerInput(Unit) {
                             detectTapGestures(
-                                onPress = {
+                                onPress = { press ->
+                                    if (!insideStadium(press, size.width.toFloat(), size.height.toFloat())) {
+                                        return@detectTapGestures
+                                    }
                                     val hold = uiScope.launch {
                                         holdProgress.animateTo(
                                             1f,
@@ -1010,6 +1013,15 @@ private fun Color.compositeOver(destination: Color): Color {
         blue = (blue * a + destination.blue * destination.alpha * (1f - a)) / aOut,
         alpha = aOut
     )
+}
+
+/** True if [p] lands on the pill itself, not the empty corners of its bounding box. */
+private fun insideStadium(p: Offset, w: Float, h: Float): Boolean {
+    val r = h / 2f
+    val cx = p.x.coerceIn(r, (w - r).coerceAtLeast(r))
+    val dx = p.x - cx
+    val dy = p.y - r
+    return dx * dx + dy * dy <= r * r
 }
 
 private fun startBedtime(context: android.content.Context) {
