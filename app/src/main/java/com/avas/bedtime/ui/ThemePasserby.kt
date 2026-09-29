@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -66,9 +67,13 @@ import kotlinx.coroutines.selects.select
 @Composable
 fun ThemePasserby(
     colors: BedtimeThemeColors,
-    avaPhotoPath: String = ""
+    avaPhotoPath: String = "",
+    calm: Boolean = false
 ) {
     val progress = remember { Animatable(-0.3f) }
+    /** 0→1 while a non-unicorn tap reaction plays; 0 when idle. */
+    val reaction = remember { Animatable(0f) }
+    val reactionScope = rememberCoroutineScope()
     var active by remember { mutableStateOf(false) }
     var startLane by remember { mutableFloatStateOf(0.28f) }
     var endLane by remember { mutableFloatStateOf(0.34f) }
@@ -127,7 +132,15 @@ fun ThemePasserby(
 
             progress.snapTo(-0.35f)
             active = true
-            val trotMs = Random.nextInt(6_800, 9_200)
+            val pace = when (colors.id) {
+                AppThemeId.Unicorn -> 1f
+                AppThemeId.Ocean -> 1.4f
+                AppThemeId.Rainbow -> 1.3f
+                AppThemeId.Night -> 1.25f
+                AppThemeId.Galaxy -> 1.2f
+                AppThemeId.Forest -> 1.1f
+            }
+            val trotMs = (Random.nextInt(6_800, 9_200) * pace).toInt()
             val trotJob = launch {
                 progress.animateTo(
                     targetValue = 1.35f,
@@ -192,9 +205,10 @@ fun ThemePasserby(
         }
     }
 
-    if (!active) return
+    if (!active || calm) return
 
     val progressValue = progress.value
+    val reactionValue = reaction.value
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val screenW = constraints.maxWidth.toFloat()
         val screenH = constraints.maxHeight.toFloat()
@@ -227,38 +241,50 @@ fun ThemePasserby(
                     flying = flying,
                     faceRight = goingRight
                 )
-                AppThemeId.Night, AppThemeId.Galaxy -> drawShootingStar(x, y, scale, colors)
-                AppThemeId.Ocean -> drawFish(x, y, scale, colors, phase)
-                AppThemeId.Forest -> drawFireflyTrail(x, y, scale, colors, phase)
-                AppThemeId.Rainbow -> drawSoftBalloon(x, y, scale, colors, phase)
+                AppThemeId.Night -> drawSleepyMoon(x, y, scale, phase, reactionValue, goingRight)
+                AppThemeId.Galaxy -> drawRingedPlanet(x, y, scale, colors, phase, reactionValue, riderFace)
+                AppThemeId.Ocean -> drawSeaTurtle(x, y, scale, phase, reactionValue, goingRight)
+                AppThemeId.Forest -> drawGlidingOwl(x, y, scale, phase, reactionValue, goingRight)
+                AppThemeId.Rainbow -> drawRainbowCloud(x, y, scale, phase, reactionValue, goingRight)
             }
         }
 
-        // Invisible moving hit target — only covers the unicorn, so START stays tappable.
-        if (colors.id == AppThemeId.Unicorn) {
-            val hitW = with(density) { (drawW * 1.05f).toDp() }
-            val hitH = with(density) { (drawH * 1.05f).toDp() }
-            Box(
-                modifier = Modifier
-                    .offset {
-                        IntOffset(
-                            (x - drawW * 0.52f).roundToInt(),
-                            (y - drawH * 0.52f).roundToInt()
-                        )
-                    }
-                    .size(hitW, hitH)
-                    .semantics { contentDescription = "Unicorn" }
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
+        // Invisible moving hit target — only covers the passerby, so START stays tappable.
+        val isUnicorn = colors.id == AppThemeId.Unicorn
+        val boxW = if (isUnicorn) drawW * 1.05f else scale * 120f
+        val boxH = if (isUnicorn) drawH * 1.05f else scale * 100f
+        Box(
+            modifier = Modifier
+                .offset {
+                    IntOffset(
+                        (x - boxW * 0.5f).roundToInt(),
+                        (y - boxH * 0.5f).roundToInt()
+                    )
+                }
+                .size(with(density) { boxW.toDp() }, with(density) { boxH.toDp() })
+                .semantics { contentDescription = colors.id.label }
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    com.avas.bedtime.session.BedtimeService.suppressStirs(6_000L)
+                    if (isUnicorn) {
                         neighPlayer.play()
                         if (!flying) {
                             flyBoost.trySend(Unit)
                         }
+                    } else if (!reaction.isRunning) {
+                        reactionScope.launch {
+                            reaction.snapTo(0f)
+                            reaction.animateTo(
+                                1f,
+                                tween(durationMillis = 2_600, easing = LinearEasing)
+                            )
+                            reaction.snapTo(0f)
+                        }
                     }
-            )
-        }
+                }
+        )
     }
 }
 
@@ -569,7 +595,7 @@ private fun DrawScope.drawLittleRider(
     drawCircle(outline.copy(alpha = 0.55f), headR, head, style = Stroke(0.04f * s))
 }
 
-private fun DrawScope.drawStar(center: Offset, radius: Float, color: Color) {
+internal fun DrawScope.drawStar(center: Offset, radius: Float, color: Color) {
     val path = Path()
     for (i in 0 until 8) {
         val angle = (i * PI / 4.0) - PI / 2.0
@@ -580,110 +606,4 @@ private fun DrawScope.drawStar(center: Offset, radius: Float, color: Color) {
     }
     path.close()
     drawPath(path, color)
-}
-
-private fun DrawScope.drawShootingStar(
-    x: Float,
-    y: Float,
-    scale: Float,
-    colors: BedtimeThemeColors
-) {
-    val s = scale * 22f
-    val tip = Offset(x, y)
-    val tail = Offset(x - 6.5f * s, y + 1.8f * s)
-    drawLine(
-        brush = Brush.linearGradient(
-            listOf(Color.Transparent, colors.subtitle.copy(alpha = 0.9f), Color.White)
-        ),
-        start = tail,
-        end = tip,
-        strokeWidth = 0.45f * s,
-        cap = StrokeCap.Round
-    )
-    drawCircle(colors.subtitle.copy(alpha = 0.45f), radius = 1.3f * s, center = tip)
-    drawCircle(Color.White, radius = 0.65f * s, center = tip)
-    drawStar(Offset(x - 1.2f * s, y + 0.4f * s), 0.28f * s, Color.White.copy(alpha = 0.7f))
-}
-
-private fun DrawScope.drawFish(
-    x: Float,
-    y: Float,
-    scale: Float,
-    colors: BedtimeThemeColors,
-    phase: Float
-) {
-    val s = scale * 24f
-    val bob = sin(phase) * 0.2f * s
-    val cy = y + bob
-    drawOval(
-        color = Color.Black.copy(alpha = 0.14f),
-        topLeft = Offset(x - 2.0f * s, cy + 1.25f * s),
-        size = Size(3.8f * s, 0.75f * s)
-    )
-    val body = Path().apply {
-        moveTo(x + 1.8f * s, cy)
-        cubicTo(x + 1.2f * s, cy - 1.1f * s, x - 1.0f * s, cy - 1.15f * s, x - 1.7f * s, cy)
-        cubicTo(x - 1.0f * s, cy + 1.15f * s, x + 1.2f * s, cy + 1.1f * s, x + 1.8f * s, cy)
-        close()
-    }
-    drawPath(body, colors.startButton)
-    drawPath(body, Color.White.copy(alpha = 0.35f), style = Stroke(width = 0.1f * s))
-    val tail = Path().apply {
-        moveTo(x - 1.55f * s, cy)
-        lineTo(x - 2.9f * s, cy - 1.05f * s)
-        lineTo(x - 2.55f * s, cy)
-        lineTo(x - 2.9f * s, cy + 1.05f * s)
-        close()
-    }
-    drawPath(tail, colors.subtitle)
-    drawCircle(Color.White, radius = 0.28f * s, center = Offset(x + 1.05f * s, cy - 0.2f * s))
-    drawCircle(Color(0xFF103040), radius = 0.13f * s, center = Offset(x + 1.12f * s, cy - 0.2f * s))
-    drawCircle(Color.White.copy(alpha = 0.5f), radius = 0.28f * s, center = Offset(x + 2.3f * s, cy - 1.3f * s))
-    drawCircle(Color.White.copy(alpha = 0.35f), radius = 0.2f * s, center = Offset(x + 2.9f * s, cy - 2.0f * s))
-}
-
-private fun DrawScope.drawFireflyTrail(
-    x: Float,
-    y: Float,
-    scale: Float,
-    colors: BedtimeThemeColors,
-    phase: Float
-) {
-    val s = scale * 18f
-    for (i in 0..6) {
-        val dx = -i * 0.95f * s
-        val dy = sin(phase + i * 1.1f) * 0.7f * s
-        val glow = colors.subtitle.copy(alpha = 0.6f - i * 0.07f)
-        drawCircle(glow, radius = (0.85f - i * 0.07f) * s, center = Offset(x + dx, y + dy))
-        drawCircle(Color.White.copy(alpha = 0.9f), radius = 0.25f * s, center = Offset(x + dx, y + dy))
-    }
-}
-
-private fun DrawScope.drawSoftBalloon(
-    x: Float,
-    y: Float,
-    scale: Float,
-    colors: BedtimeThemeColors,
-    phase: Float
-) {
-    val s = scale * 22f
-    val bob = sin(phase * 0.7f) * 0.25f * s
-    val cy = y + bob
-    drawOval(
-        color = Color.Black.copy(alpha = 0.12f),
-        topLeft = Offset(x - 1.2f * s, cy + 2.6f * s),
-        size = Size(2.4f * s, 0.55f * s)
-    )
-    drawOval(
-        color = colors.startButton,
-        topLeft = Offset(x - 1.35f * s, cy - 1.8f * s),
-        size = Size(2.7f * s, 3.1f * s)
-    )
-    drawCircle(Color.White.copy(alpha = 0.4f), radius = 0.4f * s, center = Offset(x - 0.4f * s, cy - 0.85f * s))
-    drawLine(
-        color = colors.body.copy(alpha = 0.6f),
-        start = Offset(x, cy + 1.3f * s),
-        end = Offset(x + sin(phase) * 0.15f * s, cy + 3.4f * s),
-        strokeWidth = 0.14f * s
-    )
 }

@@ -17,6 +17,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.avas.bedtime.AvaBedtimeApp
 import com.avas.bedtime.data.BedtimeSettings
 import com.avas.bedtime.session.BedtimeService
+import kotlinx.coroutines.flow.first
 
 private enum class Screen { Kid, Settings }
 
@@ -40,6 +41,10 @@ fun BedtimeApp() {
     LaunchedEffect(Unit) {
         app.settingsRepository.migrateDetectionDefaultsIfNeeded()
         app.settingsRepository.migrateSecretsIfNeeded()
+        val current = app.settingsRepository.settings.first()
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.avas.bedtime.session.NightSummaryDispatcher.flushIfDueSync(context, current)
+        }
     }
 
     BackHandler(enabled = screen == Screen.Settings) {

@@ -71,7 +71,10 @@ object BedtimeScheduler {
 class BedtimeAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
-        if (action != BedtimeScheduler.ACTION_ALARM && action != Intent.ACTION_BOOT_COMPLETED) {
+        if (action != BedtimeScheduler.ACTION_ALARM &&
+            action != Intent.ACTION_BOOT_COMPLETED &&
+            action != NightSummaryDispatcher.ACTION_FLUSH
+        ) {
             return
         }
         Log.i("BedtimeScheduler", "Received $action")
@@ -85,7 +88,17 @@ class BedtimeAlarmReceiver : BroadcastReceiver() {
                     BedtimeService.latestSettings
                 }
                 BedtimeService.applyStirSettings(settings)
+                if (action == NightSummaryDispatcher.ACTION_FLUSH) {
+                    NightSummaryDispatcher.flushIfDueSync(context, settings)
+                    return@Thread
+                }
                 if (action == Intent.ACTION_BOOT_COMPLETED) {
+                    NightSummaryDispatcher.flushIfDueSync(context, settings)
+                    com.avas.bedtime.data.NightProgressStore(context).load()?.let { pending ->
+                        if (pending.deadlineEpochMs > System.currentTimeMillis()) {
+                            NightSummaryDispatcher.scheduleFlush(context, pending.deadlineEpochMs)
+                        }
+                    }
                     if (settings.autoStartAtBedtime) {
                         BedtimeScheduler.reschedule(context, settings)
                     }

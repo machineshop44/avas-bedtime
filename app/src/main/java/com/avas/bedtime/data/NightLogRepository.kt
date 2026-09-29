@@ -23,7 +23,9 @@ data class NightSummary(
     val farthestTrackTitle: String,
     val trackCount: Int,
     val farthestPositionMs: Long,
-    val longestQuietStretchMs: Long
+    val longestQuietStretchMs: Long,
+    val earlyStops: Int = 0,
+    val lastStopSource: String = ""
 ) {
     val totalRestarts: Int get() = micRestarts + motionRestarts + manualRestarts
 
@@ -36,6 +38,10 @@ data class NightSummary(
         append(formatFarthest())
         append('\n')
         append("Longest stretch: ${formatDuration(longestQuietStretchMs)}")
+        if (earlyStops > 0) {
+            append('\n')
+            append("Stopped early: $earlyStops× (last: ${lastStopSource.ifBlank { "unknown" }})")
+        }
     }
 
     fun formatSettingsBlock(): String = formatNotificationBody()
@@ -104,7 +110,9 @@ class NightLogRepository(context: Context) {
                             farthestTrackTitle = o.optString("farthestTrackTitle"),
                             trackCount = o.optInt("trackCount"),
                             farthestPositionMs = o.optLong("farthestPositionMs"),
-                            longestQuietStretchMs = o.optLong("longestQuietStretchMs")
+                            longestQuietStretchMs = o.optLong("longestQuietStretchMs"),
+                            earlyStops = o.optInt("earlyStops"),
+                            lastStopSource = o.optString("lastStopSource")
                         )
                     )
                 }
@@ -130,6 +138,8 @@ class NightLogRepository(context: Context) {
                         .put("trackCount", n.trackCount)
                         .put("farthestPositionMs", n.farthestPositionMs)
                         .put("longestQuietStretchMs", n.longestQuietStretchMs)
+                        .put("earlyStops", n.earlyStops)
+                        .put("lastStopSource", n.lastStopSource)
                 )
             }
             file.writeText(arr.toString())

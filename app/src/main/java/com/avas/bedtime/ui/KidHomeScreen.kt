@@ -85,6 +85,23 @@ import com.avas.bedtime.ui.theme.BedtimeThemeColors
 import com.avas.bedtime.ui.theme.themeColors
 import kotlin.math.max
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+
+private const val HOLD_TO_STOP_MS = 1_500
+private const val CALM_AFTER_MS = 60_000L
+private const val CALM_BRIGHTNESS = 0.02f
 
 private data class HomeMetrics(
     val photoSize: Dp,
@@ -237,6 +254,41 @@ fun KidHomeScreen(
     }
 
     val ready = settings.hasBedtimePlaylist
+    val uiScope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    val restartRing = remember { Animatable(0f) }
+    val holdProgress = remember { Animatable(0f) }
+    var showHoldHint by remember { mutableStateOf(false) }
+    LaunchedEffect(showHoldHint) {
+        if (showHoldHint) {
+            delay(2_500)
+            showHoldHint = false
+        }
+    }
+
+    // Calm mode: after a quiet minute the screen dims and goes still; any tap wakes it.
+    var lastTouchElapsed by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(session.active) { lastTouchElapsed = SystemClock.elapsedRealtime() }
+    val sessionActiveNow by rememberUpdatedState(session.active)
+    val calm = session.active &&
+        SystemClock.elapsedRealtime().coerceAtLeast(tick) - lastTouchElapsed > CALM_AFTER_MS
+    val activity = context as? android.app.Activity
+    DisposableEffect(calm, activity) {
+        val window = activity?.window
+        window?.attributes = window?.attributes?.apply {
+            screenBrightness = if (calm) {
+                CALM_BRIGHTNESS
+            } else {
+                android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+        }
+        onDispose {
+            window?.attributes = window?.attributes?.apply {
+                screenBrightness = android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+        }
+    }
+
     val pulse by animateFloatAsState(
         targetValue = if (session.active) 1.03f else 1f,
         animationSpec = tween(900),
@@ -254,6 +306,17 @@ fun KidHomeScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type == PointerEventType.Press) {
+                            lastTouchElapsed = SystemClock.elapsedRealtime()
+                            if (sessionActiveNow) BedtimeService.suppressStirs(4_000L)
+                        }
+                    }
+                }
+            }
     ) {
         SoftAtmosphere(colors = colors)
         val metrics = rememberHomeMetrics(maxHeight, maxWidth, sessionActive = session.active)
@@ -448,33 +511,73 @@ fun KidHomeScreen(
                 }
 
                 if (session.active) {
-                    BigRoundButton(
-                        label = "RESTART",
-                        color = colors.startButton,
-                        textColor = colors.buttonText,
-                        shadowTint = colors.shadowTint,
-                        scale = pulse,
-                        size = metrics.buttonSize,
-                        labelSp = metrics.buttonLabelSp,
-                        onClick = {
-                            val intent = Intent(context, BedtimeService::class.java)
-                                .setAction(BedtimeService.ACTION_RESTART)
-                            context.startService(intent)
+                    Box(contentAlignment = Alignment.Center) {
+                        val ring = restartRing.value
+                        if (ring > 0f) {
+                            val ringColor = colors.startButton
+                            Canvas(modifier = Modifier.size(metrics.buttonSize)) {
+                                drawCircle(
+                                    color = ringColor.copy(alpha = 0.55f * (1f - ring)),
+                                    radius = size.minDimension / 2f * (1f + 0.45f * ring),
+                                    style = Stroke(width = 6.dp.toPx() * (1f - ring) + 1f)
+                                )
+                            }
                         }
-                    )
-                    Spacer(Modifier.height(12.dp))
+                        BigRoundButton(
+                            label = "RESTART",
+                            color = colors.startButton,
+                            textColor = colors.buttonText,
+                            shadowTint = colors.shadowTint,
+                            scale = pulse,
+                            size = metrics.buttonSize,
+                            labelSp = metrics.buttonLabelSp,
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                uiScope.launch {
+                                    restartRing.snapTo(0f)
+                                    restartRing.animateTo(1f, tween(900))
+                                    restartRing.snapTo(0f)
+                                }
+                                val intent = Intent(context, BedtimeService::class.java)
+                                    .setAction(BedtimeService.ACTION_RESTART)
+                                context.startService(intent)
+                            }
+                        )
+                    }
+                    // Wide gap: RESTART's touch area is its full square, not just the circle.
+                    Spacer(Modifier.height(28.dp))
                     GlossyPillButton(
-                        label = "STOP",
+                        label = if (showHoldHint) "HOLD TO STOP" else "STOP",
                         color = colors.stopButton,
                         textColor = colors.buttonText,
                         shadowTint = colors.shadowTint,
                         minWidth = metrics.stopMinWidth,
                         height = metrics.stopHeight,
-                        labelSp = metrics.stopLabelSp,
-                        onClick = {
-                            val intent = Intent(context, BedtimeService::class.java)
-                                .setAction(BedtimeService.ACTION_STOP)
-                            context.startService(intent)
+                        labelSp = if (showHoldHint) metrics.stopLabelSp * 0.8f else metrics.stopLabelSp,
+                        fillFraction = holdProgress.value,
+                        gestureModifier = Modifier.pointerInput(Unit) {
+                            detectTapGestures(
+                                onPress = {
+                                    val hold = uiScope.launch {
+                                        holdProgress.animateTo(
+                                            1f,
+                                            tween(durationMillis = HOLD_TO_STOP_MS, easing = LinearEasing)
+                                        )
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        val intent = Intent(context, BedtimeService::class.java)
+                                            .setAction(BedtimeService.ACTION_STOP)
+                                            .putExtra(BedtimeService.EXTRA_STOP_SOURCE, "app STOP (held)")
+                                        context.startService(intent)
+                                        holdProgress.snapTo(0f)
+                                    }
+                                    tryAwaitRelease()
+                                    if (hold.isActive) {
+                                        hold.cancel()
+                                        showHoldHint = true
+                                        uiScope.launch { holdProgress.animateTo(0f, tween(200)) }
+                                    }
+                                }
+                            )
                         }
                     )
                 } else {
@@ -504,8 +607,19 @@ fun KidHomeScreen(
         // Draw above home UI so the unicorn isn't hidden under START/STOP.
         ThemePasserby(
             colors = colors,
-            avaPhotoPath = settings.avaPhotoPath
+            avaPhotoPath = settings.avaPhotoPath,
+            calm = calm
         )
+        if (calm) {
+            // Swallows the waking tap so it can't land on RESTART / STOP underneath.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .pointerInput(Unit) { detectTapGestures { } }
+                    .semantics { contentDescription = "Tap to wake the screen" }
+            )
+        }
     }
 }
 
@@ -718,7 +832,8 @@ private fun GlossyPillButton(
     minWidth: Dp,
     height: Dp,
     labelSp: Float,
-    onClick: () -> Unit
+    fillFraction: Float = 0f,
+    gestureModifier: Modifier
 ) {
     val shape = RoundedCornerShape(percent = 50)
     val highlight = Color.White.copy(alpha = 0.42f)
@@ -750,11 +865,7 @@ private fun GlossyPillButton(
                 )
             )
             .border(width = 2.5.dp, color = rimLight, shape = shape)
-            .combinedClickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            )
+            .then(gestureModifier)
             .padding(horizontal = 28.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -762,6 +873,13 @@ private fun GlossyPillButton(
             val w = this.size.width
             val h = this.size.height
             val corner = h / 2f
+            if (fillFraction > 0f) {
+                drawRect(
+                    color = Color.White.copy(alpha = 0.34f),
+                    topLeft = Offset(-28.dp.toPx(), 0f),
+                    size = Size((w + 56.dp.toPx()) * fillFraction, h)
+                )
+            }
             // Soft top gloss blob.
             drawRoundRect(
                 brush = Brush.radialGradient(

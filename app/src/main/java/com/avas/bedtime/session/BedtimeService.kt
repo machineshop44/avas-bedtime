@@ -15,19 +15,17 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.avas.bedtime.AvaBedtimeApp
 import com.avas.bedtime.MainActivity
 import com.avas.bedtime.R
 import com.avas.bedtime.data.BedtimeSettings
 import com.avas.bedtime.data.EndMode
+import com.avas.bedtime.data.NightProgressStore
 import com.avas.bedtime.data.NightSessionStore
-import com.avas.bedtime.data.NightSummary
 import com.avas.bedtime.data.ScheduleTime
 import com.avas.bedtime.detect.StirDetector
 import com.avas.bedtime.detect.StirSource
-import com.avas.bedtime.notify.DiscordWebhookSender
 import com.avas.bedtime.player.PlaylistPlayer
 import com.avas.bedtime.player.PlaylistProgress
 import com.avas.bedtime.plex.PlexApi
@@ -77,6 +75,15 @@ class BedtimeService : Service() {
     private var farthestTitle = ""
     private var farthestPositionMs = 0L
     private var trackCount = 0
+    private var accumulatedRunMs = 0L
+    private var runStartedElapsed = 0L
+    private var nightDeadlineEpochMs = 0L
+    private var earlyStops = 0
+    private var lastStopSource = ""
+    private lateinit var progressStore: NightProgressStore
+    /** Notification Stop sits beside Restart, so it needs a second tap within this window. */
+    private var stopArmedUntilElapsed = 0L
+    private var disarmJob: Job? = null
     /** Bumped on START/STOP so cancelled Discord shutdown cannot stopSelf a new session. */
     private var lifecycleGeneration = 0
     /** Bumped when playback ownership changes so a late load cannot resume after STOP. */
@@ -85,6 +92,7 @@ class BedtimeService : Service() {
     override fun onCreate() {
         super.onCreate()
         sessionStore = NightSessionStore(this)
+        progressStore = NightProgressStore(this)
         player = PlaylistPlayer(this, scope) {
             _state.value.active
         }
@@ -114,7 +122,11 @@ class BedtimeService : Service() {
                 }
                 startSession(latestSettings)
             }
-            ACTION_STOP -> stopSession(reason = "manual")
+            ACTION_STOP -> stopSession(
+                reason = "manual",
+                source = intent.getStringExtra(EXTRA_STOP_SOURCE) ?: "unknown STOP"
+            )
+            ACTION_STOP_ARM -> armOrConfirmStop()
             ACTION_RESTART -> restartPlaylistOnly(sourceLabel = null)
             else -> {
                 val snap = sessionStore.load()
@@ -173,7 +185,10 @@ class BedtimeService : Service() {
             "Session end mode=${settings.resolvedEndMode} remaining=$remainingLabel wake=${settings.wakeLabel}"
         )
 
-        resetNightCounters()
+        beginOrResumeNight(
+            deadlineEpochMs = System.currentTimeMillis() +
+                max(0L, endsAtElapsed - SystemClock.elapsedRealtime())
+        )
         lastNotificationContent = null
         promoteForeground("Starting bedtime…")
         lastNotificationContent = "Starting bedtime…"
@@ -213,18 +228,87 @@ class BedtimeService : Service() {
         sessionStore.save(endsEpoch, settings.shufflePlaylist)
     }
 
-    private fun resetNightCounters() {
+    /**
+     * Continue tonight's counters if bedtime was stopped (or the process was killed)
+     * before wake time; otherwise start a fresh night.
+     */
+    private fun beginOrResumeNight(deadlineEpochMs: Long) {
+        NightSummaryDispatcher.cancelFlush(this)
+        val nowMs = System.currentTimeMillis()
+        val pending = progressStore.take()
+        val resume = when {
+            pending == null -> false
+            pending.deadlineEpochMs <= nowMs -> {
+                val settings = latestSettings
+                scope.launch(Dispatchers.IO) {
+                    NightSummaryDispatcher.deliverSync(applicationContext, settings, pending)
+                }
+                false
+            }
+            pending.runMs < NightSummaryDispatcher.MIN_RUN_MS_TO_REPORT &&
+                nowMs - pending.lastEndedAtMs > NightSummaryDispatcher.STALE_SHORT_GAP_MS -> false
+            else -> true
+        }
+        val nowElapsed = SystemClock.elapsedRealtime()
         loggingSession = true
-        sessionStartedAtMs = System.currentTimeMillis()
-        stretchStartedElapsed = SystemClock.elapsedRealtime()
-        longestQuietMs = 0L
-        micRestarts = 0
-        motionRestarts = 0
-        manualRestarts = 0
-        farthestIndex = -1
-        farthestTitle = ""
-        farthestPositionMs = 0L
-        trackCount = 0
+        stretchStartedElapsed = nowElapsed
+        runStartedElapsed = nowElapsed
+        nightDeadlineEpochMs = deadlineEpochMs
+        if (resume && pending != null) {
+            Log.i(TAG, "Resuming tonight's summary counters")
+            sessionStartedAtMs = pending.startedAtMs
+            accumulatedRunMs = pending.runMs
+            longestQuietMs = pending.longestQuietStretchMs
+            micRestarts = pending.micRestarts
+            motionRestarts = pending.motionRestarts
+            manualRestarts = pending.manualRestarts
+            farthestIndex = pending.farthestTrackIndex
+            farthestTitle = pending.farthestTrackTitle
+            farthestPositionMs = pending.farthestPositionMs
+            trackCount = pending.trackCount
+            earlyStops = pending.earlyStops
+            lastStopSource = pending.lastStopSource
+        } else {
+            earlyStops = 0
+            lastStopSource = ""
+            sessionStartedAtMs = nowMs
+            accumulatedRunMs = 0L
+            longestQuietMs = 0L
+            micRestarts = 0
+            motionRestarts = 0
+            manualRestarts = 0
+            farthestIndex = -1
+            farthestTitle = ""
+            farthestPositionMs = 0L
+            trackCount = 0
+        }
+        checkpointNight()
+    }
+
+    private fun currentNightProgress(): NightProgressStore.Progress {
+        val nowElapsed = SystemClock.elapsedRealtime()
+        return NightProgressStore.Progress(
+            startedAtMs = sessionStartedAtMs,
+            lastEndedAtMs = System.currentTimeMillis(),
+            deadlineEpochMs = nightDeadlineEpochMs,
+            runMs = accumulatedRunMs + (nowElapsed - runStartedElapsed),
+            micRestarts = micRestarts,
+            motionRestarts = motionRestarts,
+            manualRestarts = manualRestarts,
+            farthestTrackIndex = farthestIndex,
+            farthestTrackTitle = farthestTitle,
+            trackCount = trackCount,
+            farthestPositionMs = farthestPositionMs,
+            longestQuietStretchMs = max(longestQuietMs, nowElapsed - stretchStartedElapsed),
+            earlyStops = earlyStops,
+            lastStopSource = lastStopSource
+        )
+    }
+
+    /** Persist so an OEM process kill mid-night doesn't lose the counters. */
+    private fun checkpointNight() {
+        if (!loggingSession) return
+        progressStore.save(currentNightProgress())
     }
 
     private suspend fun startPlayback(settings: BedtimeSettings, loadGen: Int): Boolean {
@@ -295,8 +379,13 @@ class BedtimeService : Service() {
         timerJob?.cancel()
         timerJob = scope.launch {
             var startingOverUntil = 0L
+            var lastCheckpointElapsed = SystemClock.elapsedRealtime()
             while (isActive) {
                 noteProgress(player.currentProgress())
+                if (SystemClock.elapsedRealtime() - lastCheckpointElapsed >= 60_000L) {
+                    lastCheckpointElapsed = SystemClock.elapsedRealtime()
+                    checkpointNight()
+                }
                 val remaining = max(0L, endsAtElapsed - SystemClock.elapsedRealtime())
                 val previous = _state.value
                 val now = SystemClock.elapsedRealtime()
@@ -357,6 +446,9 @@ class BedtimeService : Service() {
         stirDetector?.ignoreAudioChange(muteMs)
         player.restartFromBeginning()
         stretchStartedElapsed = SystemClock.elapsedRealtime()
+        checkpointNight()
+        stopArmedUntilElapsed = 0L
+        disarmJob?.cancel()
         _state.value = _state.value.copy(
             endsAtElapsedRealtime = timerEnd,
             lastStirSource = sourceLabel ?: _state.value.lastStirSource,
@@ -387,11 +479,12 @@ class BedtimeService : Service() {
         if (stretch > longestQuietMs) longestQuietMs = stretch
     }
 
-    private fun stopSession(reason: String) {
+    private fun stopSession(reason: String, source: String = reason) {
         if (shutdownJob?.isActive == true) {
             Log.i(TAG, "stopSession($reason) ignored — shutdown already in progress")
             return
         }
+        Log.w(TAG, "stopSession reason=$reason source=$source active=${_state.value.active}")
         val stopGen = ++lifecycleGeneration
         playGeneration++
         loadJob?.cancel()
@@ -406,29 +499,42 @@ class BedtimeService : Service() {
         sessionStore.clear()
         releaseWifiLock()
 
-        val summary = takeNightSummaryOrNull()
+        stopArmedUntilElapsed = 0L
+        disarmJob?.cancel()
+        if (loggingSession && reason != "timer" &&
+            nightDeadlineEpochMs > System.currentTimeMillis() + 30_000L
+        ) {
+            earlyStops++
+            lastStopSource = source
+        }
+        val progress = if (loggingSession) currentNightProgress() else null
+        loggingSession = false
         _state.value = BedtimeSessionState(
             active = false,
             statusMessage = if (reason == "timer") "Good morning" else "Stopped"
         )
 
-        if (summary == null) {
+        if (progress == null) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
         }
 
-        val app = applicationContext as? AvaBedtimeApp
-        scope.launch(Dispatchers.IO) {
-            app?.nightLogRepository?.add(summary)
+        val nightOver = reason == "timer" ||
+            progress.deadlineEpochMs <= System.currentTimeMillis() + 30_000L
+        if (!nightOver) {
+            progressStore.save(progress)
+            NightSummaryDispatcher.scheduleFlush(this, progress.deadlineEpochMs)
+            Log.i(TAG, "Stopped before wake time — night paused; summary sends at wake time")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
         }
-        postNightSummaryNotification(summary)
-        Log.i(TAG, "Night summary ($reason):\n${summary.formatNotificationBody()}")
 
-        val webhookUrl = latestSettings.discordWebhookUrl
-        val title = "${latestSettings.possessiveName} night"
-        val body = summary.formatNotificationBody()
-        val needsDiscord = DiscordWebhookSender.isValidWebhookUrl(webhookUrl)
+        progressStore.clear()
+        NightSummaryDispatcher.cancelFlush(this)
+        val settings = latestSettings
+        Log.i(TAG, "Night over ($reason):\n${progress.toSummary().formatNotificationBody()}")
 
         val wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AvaBedtime:NightSummary")
@@ -444,12 +550,7 @@ class BedtimeService : Service() {
 
         shutdownJob = scope.launch(Dispatchers.IO) {
             try {
-                if (needsDiscord) {
-                    val ok = DiscordWebhookSender.sendNightSummarySync(webhookUrl, title, body)
-                    Log.i(TAG, "Discord night summary after $reason: ok=$ok")
-                } else {
-                    Log.i(TAG, "No Discord webhook configured — local summary only")
-                }
+                NightSummaryDispatcher.deliverSync(applicationContext, settings, progress)
             } finally {
                 withContext(Dispatchers.Main) {
                     runCatching {
@@ -466,47 +567,21 @@ class BedtimeService : Service() {
         }
     }
 
-    private fun takeNightSummaryOrNull(): NightSummary? {
-        if (!loggingSession) return null
-        loggingSession = false
-        return NightSummary(
-            startedAtMs = sessionStartedAtMs,
-            endedAtMs = System.currentTimeMillis(),
-            micRestarts = micRestarts,
-            motionRestarts = motionRestarts,
-            manualRestarts = manualRestarts,
-            farthestTrackIndex = farthestIndex,
-            farthestTrackTitle = farthestTitle,
-            trackCount = trackCount,
-            farthestPositionMs = farthestPositionMs,
-            longestQuietStretchMs = longestQuietMs
-        )
-    }
-
-    private fun postNightSummaryNotification(summary: NightSummary) {
-        val open = PendingIntent.getActivity(
-            this,
-            2,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val body = summary.formatNotificationBody()
-        val childName = latestSettings.possessiveName
-        val notification = NotificationCompat.Builder(this, AvaBedtimeApp.NIGHT_SUMMARY_CHANNEL_ID)
-            .setContentTitle("$childName night")
-            .setContentText(
-                "Restarts ${summary.totalRestarts} · ${summary.formatFarthest()}"
-            )
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentIntent(open)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
-        runCatching {
-            NotificationManagerCompat.from(this).notify(SUMMARY_NOTIFICATION_ID, notification)
-        }.onFailure {
-            Log.e(TAG, "Could not post night summary notification", it)
+    private fun armOrConfirmStop() {
+        val now = SystemClock.elapsedRealtime()
+        if (!_state.value.active || now < stopArmedUntilElapsed) {
+            stopSession(reason = "manual", source = "notification Stop")
+            return
+        }
+        stopArmedUntilElapsed = now + STOP_CONFIRM_WINDOW_MS
+        lastNotificationContent?.let { promoteForeground(it) }
+        disarmJob?.cancel()
+        disarmJob = scope.launch {
+            delay(STOP_CONFIRM_WINDOW_MS)
+            if (stopArmedUntilElapsed != 0L && _state.value.active) {
+                stopArmedUntilElapsed = 0L
+                lastNotificationContent?.let { promoteForeground(it) }
+            }
         }
     }
 
@@ -584,12 +659,20 @@ class BedtimeService : Service() {
         val stop = PendingIntent.getService(
             this,
             1,
-            Intent(this, BedtimeService::class.java).setAction(ACTION_STOP),
+            Intent(this, BedtimeService::class.java).setAction(ACTION_STOP_ARM),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val stopArmed = SystemClock.elapsedRealtime() < stopArmedUntilElapsed
         fun playbackViews() = android.widget.RemoteViews(packageName, R.layout.notification_playback).apply {
             setTextViewText(R.id.notif_title, getString(R.string.notification_title))
             setTextViewText(R.id.notif_text, content)
+            setTextViewText(
+                R.id.notif_btn_stop,
+                getString(
+                    if (stopArmed) R.string.notification_action_stop_confirm
+                    else R.string.notification_action_stop
+                )
+            )
             setOnClickPendingIntent(R.id.notif_btn_restart, restart)
             setOnClickPendingIntent(R.id.notif_btn_stop, stop)
         }
@@ -634,9 +717,10 @@ class BedtimeService : Service() {
         const val ACTION_START = "com.avas.bedtime.START"
         const val ACTION_STOP = "com.avas.bedtime.STOP"
         const val ACTION_RESTART = "com.avas.bedtime.RESTART"
+        const val ACTION_STOP_ARM = "com.avas.bedtime.STOP_ARM"
+        const val EXTRA_STOP_SOURCE = "stop_source"
+        private const val STOP_CONFIRM_WINDOW_MS = 4_000L
         private const val NOTIFICATION_ID = 42
-        private const val SUMMARY_NOTIFICATION_ID = 43
-
         @Volatile
         var instance: BedtimeService? = null
             private set
@@ -646,6 +730,11 @@ class BedtimeService : Service() {
 
         @Volatile
         var latestSettings: BedtimeSettings = BedtimeSettings()
+
+        /** Screen taps jolt the mattress and passerby sounds reach the mic — don't count them as stirs. */
+        fun suppressStirs(durationMs: Long) {
+            instance?.stirDetector?.ignoreAudioChange(durationMs)
+        }
 
         fun applyStirSettings(settings: BedtimeSettings) {
             latestSettings = settings
